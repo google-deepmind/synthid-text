@@ -22,7 +22,7 @@ import immutabledict
 import torch
 import transformers
 
-from . import logits_processing
+from synthid_text import logits_processing
 
 
 DEFAULT_WATERMARKING_CONFIG = immutabledict.immutabledict({

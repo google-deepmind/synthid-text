@@ -21,8 +21,8 @@ import torch
 import transformers
 from transformers import utils as transformers_utils
 
-from . import synthid_mixin
-from . import logits_processing
+from synthid_text import synthid_mixin
+from synthid_text import logits_processing
 
 
 @dataclasses.dataclass(frozen=True)
