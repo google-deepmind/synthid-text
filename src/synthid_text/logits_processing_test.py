@@ -22,12 +22,12 @@ import numpy as np
 import torch
 import tqdm
 
-from . import logits_processing
-from . import g_value_expectations
-from . import torch_testing
+from synthid_text import logits_processing
+from synthid_text import g_value_expectations
+from synthid_text import torch_testing
 
 
-def test_mean_g_value_matches_theoretical(
+def does_mean_g_value_matches_theoretical(
     vocab_size: int,
     ngram_len: int,
     batch_size: int,
@@ -307,7 +307,7 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
   ):
     """Check if watermarked distribution converges to input distribution."""
     device = torch_testing.torch_device()
-    result = test_mean_g_value_matches_theoretical(
+    mean, expected, passes = does_mean_g_value_matches_theoretical(
         vocab_size=vocab_size,
         ngram_len=ngram_len,
         batch_size=20_000,
@@ -316,7 +316,7 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
         device=device,
         num_leaves=num_leaves,
     )
-    self.assertTrue(result[2])
+    self.assertTrue(passes)
 
 
 class LogitsProcessorTest(absltest.TestCase):

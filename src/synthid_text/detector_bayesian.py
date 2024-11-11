@@ -31,7 +31,7 @@ from sklearn import model_selection
 import torch
 import tqdm
 
-from . import logits_processing
+from synthid_text import logits_processing
 
 
 def pad_to_len(
