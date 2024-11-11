@@ -25,7 +25,7 @@ from . import synthid_mixin
 from . import logits_processing
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
+@dataclasses.dataclass(frozen=True)
 class Config:
 
   is_encoder_decoder: bool = True

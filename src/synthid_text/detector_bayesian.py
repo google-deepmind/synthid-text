@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 import enum
 import functools
 import gc
-from typing import Any
+from typing import Any, Optional, Union
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -64,7 +64,7 @@ def pad_to_len(
 
 def filter_and_truncate(
     outputs: torch.tensor,
-    truncation_length: int | None,
+    truncation_length: Optional[int],
     eos_token_mask: torch.tensor,
 ) -> torch.tensor:
   """Filter and truncate outputs to given length.
@@ -90,8 +90,8 @@ def process_outputs_for_training(
     logits_processor: logits_processing.SynthIDLogitsProcessor,
     tokenizer: Any,
     *,
-    pos_truncation_length: int | None,
-    neg_truncation_length: int | None,
+    pos_truncation_length: Optional[int],
+    neg_truncation_length: Optional[int],
     max_length: int,
     is_cv: bool,
     is_pos: bool,
@@ -233,7 +233,7 @@ class LikelihoodModelWatermarked(nn.Module, LikelihoodModel):
   """
 
   watermarking_depth: int
-  params: Mapping[str, Mapping[str, Any]] | None = None
+  params: Optional[Mapping[str, Mapping[str, Any]]] = None
 
   def setup(self):
     """Initializes the model parameters."""
@@ -394,7 +394,7 @@ class BayesianDetectorModule(nn.Module):
   """
 
   watermarking_depth: int  # The number of tournament layers.
-  params: Mapping[str, Mapping[str, Any]] | None = None
+  params: Optional[Mapping[str, Mapping[str, Any]]] = None
   baserate: float = 0.5  # Prior probability P(w) that a text is watermarked.
 
   @property
@@ -442,7 +442,7 @@ class BayesianDetectorModule(nn.Module):
 
   def score(
       self,
-      g_values: jnp.ndarray | Sequence[jnp.ndarray],
+      g_values: Union[jnp.ndarray, Sequence[jnp.ndarray]],
       mask: jnp.ndarray,
   ) -> jnp.ndarray:
     if self.params is None:
@@ -522,9 +522,9 @@ def train(
     seed: int = 0,
     l2_weight: float = 0.0,
     shuffle: bool = True,
-    g_values_val: jnp.ndarray | None = None,
-    mask_val: jnp.ndarray | None = None,
-    watermarked_val: jnp.ndarray | None = None,
+    g_values_val: Optional[jnp.ndarray] = None,
+    mask_val: Optional[jnp.ndarray] = None,
+    watermarked_val: Optional[jnp.ndarray] = None,
     verbose: bool = False,
     validation_metric: ValidationMetric = ValidationMetric.TPR_AT_FPR,
 ) -> tuple[Mapping[int, Mapping[str, PyTree]], float]:
@@ -761,14 +761,14 @@ class BayesianDetector:
   def process_raw_model_outputs(
       cls,
       *,
-      tokenized_wm_outputs: Sequence[np.ndarray] | np.ndarray,
-      tokenized_uwm_outputs: Sequence[np.ndarray] | np.ndarray,
+      tokenized_wm_outputs: Union[Sequence[np.ndarray], np.ndarray],
+      tokenized_uwm_outputs: Union[Sequence[np.ndarray], np.ndarray],
       logits_processor: logits_processing.SynthIDLogitsProcessor,
       tokenizer: Any,
       torch_device: torch.device,
       test_size: float = 0.3,
-      pos_truncation_length: int | None = 200,
-      neg_truncation_length: int | None = 100,
+      pos_truncation_length: Optional[int] = 200,
+      neg_truncation_length: Optional[int] = 100,
       max_padded_length: int = 2300,
   ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Process raw models outputs into inputs we can train.
@@ -986,14 +986,14 @@ class BayesianDetector:
   def train_best_detector(
       cls,
       *,
-      tokenized_wm_outputs: Sequence[np.ndarray] | np.ndarray,
-      tokenized_uwm_outputs: Sequence[np.ndarray] | np.ndarray,
+      tokenized_wm_outputs: Union[Sequence[np.ndarray], np.ndarray],
+      tokenized_uwm_outputs: Union[Sequence[np.ndarray], np.ndarray],
       logits_processor: logits_processing.SynthIDLogitsProcessor,
       tokenizer: Any,
       torch_device: torch.device,
       test_size: float = 0.3,
-      pos_truncation_length: int | None = 200,
-      neg_truncation_length: int | None = 100,
+      pos_truncation_length: Optional[int] = 200,
+      neg_truncation_length: Optional[int] = 100,
       max_padded_length: int = 2300,
       n_epochs: int = 50,
       learning_rate: float = 2.1e-2,
