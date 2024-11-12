@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import torch
 import transformers
 
-from . import hashing_function
+from synthid_text import hashing_function
 
 
 def update_scores(

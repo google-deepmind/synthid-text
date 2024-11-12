@@ -15,6 +15,7 @@
 
 """Code for Mean and Weighted Mean scoring functions."""
 
+from typing import Optional
 import jax.numpy as jnp
 
 
@@ -43,7 +44,7 @@ def mean_score(
 def weighted_mean_score(
     g_values: jnp.ndarray,
     mask: jnp.ndarray,
-    weights: jnp.ndarray | None = None,
+    weights: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
   """Computes the Weighted Mean score.
 

@@ -16,13 +16,13 @@
 """SynthID watermarked mixin class."""
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Optional, Union
 
 import immutabledict
 import torch
 import transformers
 
-from . import logits_processing
+from synthid_text import logits_processing
 
 
 DEFAULT_WATERMARKING_CONFIG = immutabledict.immutabledict({
@@ -136,10 +136,12 @@ class SynthIDSparseTopKMixin(transformers.GenerationMixin):
       stopping_criteria: transformers.StoppingCriteriaList,
       generation_config: transformers.GenerationConfig,
       synced_gpus: bool,
-      streamer: "transformers.BaseStreamer | None",
-      logits_warper: transformers.LogitsProcessorList | None = None,
+      streamer: Optional["transformers.BaseStreamer"],
+      logits_warper: Optional[transformers.LogitsProcessorList] = None,
       **model_kwargs,
-  ) -> transformers.generation.utils.GenerateNonBeamOutput | torch.LongTensor:
+  ) -> Union[
+      transformers.generation.utils.GenerateNonBeamOutput, torch.LongTensor
+  ]:
     r"""Sample sequence of tokens.
 
     Generates sequences of token ids for models with a language modeling head
