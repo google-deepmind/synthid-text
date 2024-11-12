@@ -31,7 +31,7 @@ class Config:
   is_encoder_decoder: bool = True
 
 
-class TestSynthIDModel(synthid_mixin.SynthIDSparseTopKMixin):
+class MockSynthIDModel(synthid_mixin.SynthIDSparseTopKMixin):
 
   def __init__(self, config: Config):
     super().__init__()
@@ -70,7 +70,7 @@ class SynthidMixinTest(absltest.TestCase):
         autospec=True,
     ) as mock_watermarked_call:
       mock_watermarked_call.side_effect = old_watermarked_call
-      synthid_model = TestSynthIDModel(config=Config())
+      synthid_model = MockSynthIDModel(config=Config())
       generation_config = transformers.GenerationConfig(
           top_k=5,
           temperature=0.5,
