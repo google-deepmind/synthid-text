@@ -270,7 +270,7 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
       ])
 
     device = scores.device
-    if device != self.device:
+    if str(device) != str(self.device):
       raise ValueError(
           "SynthIDLogitsProcessor received inputs with unexpected device.",
       )

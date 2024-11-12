@@ -210,7 +210,10 @@ class SynthIDSparseTopKMixin(transformers.GenerationMixin):
           "`do_sample` is set to `True`, `logits_warper` must be a"
           f" `LogitsProcessorList` instance (it is {logits_warper})."
       )
-
+    if has_eos_stopping_criteria and not pad_token_id:
+      raise ValueError(
+          "`stopping_criteria` is not empty, `pad_token_id` must be set in generation_config."
+      )
     # init attention / hidden states / scores tuples
     scores = () if (return_dict_in_generate and output_scores) else None
     raw_logits = () if (return_dict_in_generate and output_logits) else None

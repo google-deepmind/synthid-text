@@ -93,7 +93,6 @@ def does_mean_g_value_matches_theoretical(
   )
 
   probs = torch.nn.functional.softmax(updated_scores, dim=1)
-  generator = torch.Generator(device=device).manual_seed(0)
   next_tokens = torch.multinomial(
       probs,
       num_samples=1,
