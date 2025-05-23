@@ -332,6 +332,6 @@ This is not an official Google product.
 [synthid-detector-trainer]: ./src/synthid_text/train_detector_bayesian.py
 [synthid-mixin]: ./src/synthid_text/synthid_mixin.py
 [transformers]: https://github.com/huggingface/transformers
-[transformers-blog]: huggingface.co/blog/synthid-text
+[transformers-blog]: https://huggingface.co/blog/synthid-text
 [transformers-gemma]: https://github.com/huggingface/transformers/blob/e55b33ceb4b0ba3c8c11f20b6e8d6ca4b48246d4/src/transformers/models/gemma/modeling_gemma.py#L996
 [transformers-gpt2]: https://github.com/huggingface/transformers/blob/e55b33ceb4b0ba3c8c11f20b6e8d6ca4b48246d4/src/transformers/models/gpt2/modeling_gpt2.py#L1185
