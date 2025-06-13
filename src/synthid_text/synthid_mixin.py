@@ -19,10 +19,9 @@ from collections.abc import Mapping
 from typing import Any, Optional, Union
 
 import immutabledict
+from synthid_text import logits_processing
 import torch
 import transformers
-
-from synthid_text import logits_processing
 
 
 DEFAULT_WATERMARKING_CONFIG = immutabledict.immutabledict({
@@ -59,8 +58,6 @@ DEFAULT_WATERMARKING_CONFIG = immutabledict.immutabledict({
         90,
         960,
     ],
-    "sampling_table_size": 2**16,
-    "sampling_table_seed": 0,
     "context_history_size": 1024,
     "device": (
         torch.device("cuda:0")
@@ -212,10 +209,10 @@ class SynthIDSparseTopKMixin(transformers.GenerationMixin):
       )
     if has_eos_stopping_criteria and pad_token_id is None:
       raise ValueError(
-          "`stopping_criteria` is not empty, `pad_token_id` must be set in "
-          "`generation_config`. See "
-          "https://huggingface.co/docs/transformers/main/en/main_classes/text_generation#transformers.GenerationConfig"
-          "for more on how to configure the `pad_token_id`."
+          "`stopping_criteria` is not empty, `pad_token_id` must be set in"
+          " `generation_config`. See"
+          " https://huggingface.co/docs/transformers/main/en/main_classes/text_generation#transformers.GenerationConfigfor"
+          " more on how to configure the `pad_token_id`."
       )
     # init attention / hidden states / scores tuples
     scores = () if (return_dict_in_generate and output_scores) else None
