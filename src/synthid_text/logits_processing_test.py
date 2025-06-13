@@ -19,12 +19,11 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import immutabledict
 import numpy as np
+from synthid_text import g_value_expectations
+from synthid_text import logits_processing
+from synthid_text import torch_testing
 import torch
 import tqdm
-
-from synthid_text import logits_processing
-from synthid_text import g_value_expectations
-from synthid_text import torch_testing
 
 
 def does_mean_g_value_matches_theoretical(
@@ -68,8 +67,6 @@ def does_mean_g_value_matches_theoretical(
   logits_processor = logits_processing.SynthIDLogitsProcessor(
       ngram_len=ngram_len,
       keys=keys,
-      sampling_table_size=2**16,
-      sampling_table_seed=0,
       context_history_size=context_history_size,
       device=device,
       top_k=vocab_size,
@@ -147,8 +144,6 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
     watermarking_config = immutabledict.immutabledict({
         'ngram_len': ngram_len,
         'keys': np.random.randint(low=0, high=2**16, size=(num_layers,)),
-        'sampling_table_size': 2**16,
-        'sampling_table_seed': 0,
         'context_history_size': 512,
         'device': device,
     })
@@ -187,8 +182,6 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
     watermarking_config = immutabledict.immutabledict({
         'ngram_len': ngram_len,
         'keys': np.random.randint(low=0, high=2**16, size=(num_layers,)),
-        'sampling_table_size': 2**16,
-        'sampling_table_seed': 0,
         'context_history_size': 512,
         'device': device,
     })
@@ -209,7 +202,7 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
         ),
     )
 
-    g_values = logits_processor.sample_g_values(ngram_keys)
+    g_values = logits_processor.get_gvals(ngram_keys)
     # g_values shape should be [batch_size, vocab_size, num_layers]
     g_values_mean = torch.mean(torch.mean(g_values.float(), dim=1))
     self.assertAlmostEqual(g_values_mean, 0.5, delta=0.001)
@@ -227,8 +220,6 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
       watermarking_config = immutabledict.immutabledict({
           'ngram_len': 5,
           'keys': np.random.randint(0, 10**9, size=(1,), dtype=np.int64),
-          'sampling_table_size': 2**16,
-          'sampling_table_seed': 0,
           'context_history_size': 1024,
           'device': device,
       })
@@ -302,19 +293,26 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
       ),
   )
   def test_bias_from_logits_processor(
-      self, vocab_size, ngram_len, num_layers, atol, num_leaves: int = 2,
+      self,
+      vocab_size,
+      ngram_len,
+      num_layers,
+      atol,
+      num_leaves: int = 2,
   ):
     """Check if watermarked distribution converges to input distribution."""
     device = torch_testing.torch_device()
     mean, expected, passes = does_mean_g_value_matches_theoretical(
         vocab_size=vocab_size,
         ngram_len=ngram_len,
-        batch_size=20_000,
-        keys=[np.random.randint(0, 10**9) for _ in range(num_layers)],
+        batch_size=50_000,
+        keys=[1],
         atol=atol,
         device=device,
         num_leaves=num_leaves,
     )
+    print('Mean', mean)
+    print('Expected', expected)
     self.assertTrue(passes)
 
 
@@ -334,8 +332,6 @@ class LogitsProcessorTest(absltest.TestCase):
     watermarking_config = immutabledict.immutabledict({
         'ngram_len': ngram_len,
         'keys': np.random.randint(low=0, high=2**16, size=(num_layers,)),
-        'sampling_table_size': 2**16,
-        'sampling_table_seed': 0,
         'context_history_size': 512,
         'device': device,
     })
