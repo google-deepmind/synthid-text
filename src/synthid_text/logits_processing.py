@@ -329,7 +329,7 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
       self,
       ngram_keys: torch.LongTensor,
       num_apply_hash: int = 12,
-      shift: int | None = None,
+      shift: int = 0,
   ) -> torch.LongTensor:
     """Samples g values from the computed ngram keys.
 
