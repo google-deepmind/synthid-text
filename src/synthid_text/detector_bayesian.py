@@ -1028,7 +1028,7 @@ class BayesianDetector:
     Returns:
       Tuple of trained detector and loss achieved on CV data.
     """
-    if torch_device.type in ("cuda", "tpu"):
+    if torch_device.type not in ("cuda", "tpu"):
       raise ValueError(
           "We have found the training unstable on CPUs; we are working on"
           " a fix. Use GPU or TPU for training."
