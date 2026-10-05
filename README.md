@@ -25,6 +25,8 @@ that:
     lengths, we recommend empirically/theoretically computing the thresholds at
     the desired false positives rate at specific token lengths, or using a
     weighted frequentist approach as described in Appendix A.3.1.
+    A reproducible synthetic calibration baseline for the Weighted Mean detector
+    is available in [`benchmarks/detector_eval`](./benchmarks/detector_eval/).
 
 The notebook is designed to be run end-to-end with either a Gemma or GPT-2
 model, and runs best on the following runtime hardware, some of which may
