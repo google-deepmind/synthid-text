@@ -633,8 +633,9 @@ def train(
     return loss, params, opt_state
 
   def validate_with_minibatches(gvalues, masks, labels, inds, params):
-    """Update params iff opt_state is not None and always returns the loss."""
+    """Return per-example validation loss, including a partial last batch."""
     losses = []
+    batch_sizes = []
     for start in inds:
       end = start + minibatch_size
       loss = loss_fn_jitted_val(
@@ -643,7 +644,8 @@ def train(
           w_true=labels[start:end],
       )
       losses.append(loss)
-    return jnp.mean(jnp.array(losses))
+      batch_sizes.append(labels[start:end].shape[0])
+    return jnp.average(jnp.array(losses), weights=jnp.array(batch_sizes))
 
   def update_fn(opt_state, params):
     """Updates the model parameters and returns the loss."""
