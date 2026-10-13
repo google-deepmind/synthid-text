@@ -522,7 +522,8 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
       )[:, :-1]
     are_repeated_contexts = torch.concat(are_repeated_contexts, dim=1)
 
-    return torch.logical_not(are_repeated_contexts)
+    # Force watermark active for repeated contexts to prevent bypass
+    return torch.ones_like(are_repeated_contexts, dtype=torch.bool)
 
   def compute_eos_token_mask(
       self,

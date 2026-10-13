@@ -30,6 +30,7 @@ import optax
 from sklearn import model_selection
 import torch
 import tqdm
+import re
 
 from synthid_text import logits_processing
 
@@ -722,9 +723,13 @@ class BayesianDetector:
     self.tokenizer = tokenizer
 
   def score(self, outputs: jnp.ndarray) -> jnp.ndarray:
-    """Score the model output for possibility of being watermarked.
-
-    Score is within [0, 1] where 0 is not watermarked and 1 is watermarked.
+      """Score the model output for possibility of being watermarked."""
+      # Sanitize input: strip zero-width characters to prevent evasion attacks
+      text_batch = self.tokenizer.batch_decode(np.array(outputs), skip_special_tokens=True)
+      text_batch = [re.sub(r'[\u200B-\u200D\uFEFF]', '', t) for t in text_batch]
+      outputs = self.tokenizer(text_batch, return_tensors="pt", padding=True)["input_ids"].to(self.logits_processor.keys.device)
+      
+    """Score is within [0, 1] where 0 is not watermarked and 1 is watermarked.
 
     Args:
       outputs: model output of shape [batch_size, output_len]
