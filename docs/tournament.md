@@ -34,8 +34,8 @@ detectability at the price of adding distortion.
 
 In implementations without speculative decoding watermarking is added at the end
 of every forward pass where it modifies the sampling procedure. At a very high
-level, when sampling the $t$-th token the procedure uses pseudorandom numbers
-(PRNs) derived from a secret key and the previous $k$ tokens (`context_len`).
+level, when sampling the $`t`$-th token the procedure uses pseudorandom numbers
+(PRNs) derived from a secret key and the previous $`k`$ tokens (`context_len`).
 Given access to the secret key, the PRNs used in the sampling can be recovered
 and correlated with the observed tokens to identify the watermark.
 
@@ -44,7 +44,7 @@ and correlated with the observed tokens to identify the watermark.
 | Name | Type | Description | Default |
 |---|---|---|---|
 | `context_history_size` | `int` | number of preceding contexts searched for a repeated context (see `is_masked`) | 1024 |
-| `context_len` | `int` | number of preceding tokens ($k$) used to seed the PRNG | 4 |
+| `context_len` | `int` | number of preceding tokens ($`k`$) used to seed the PRNG | 4 |
 | `ngram_len` | `int` | `context_len + 1`: a context together with the token that follows it (the name used in the code) | 5 |
 | `top_k` | `int` | watermarking always samples from the `top_k` tokens | 40 |
 | `depth` | `int` | number of tournament layers | 15 |
@@ -59,7 +59,7 @@ engine samples tokens autoregressively. The sampling engine in this case is
 decomposed into four components:
 
 - **`get_g_values`** — The PRNG that uses the context (previous `context_len`
-  tokens) and the key to produce pseudorandom $g$-values for each candidate
+  tokens) and the key to produce pseudorandom $`g`$-values for each candidate
   token.
 - **`sampling_engine`** — The engine itself that autoregressively samples tokens
   from the model, injecting the watermark into the next-token distribution at
@@ -82,14 +82,14 @@ We assume the following:
 - **`get_top_k(p, top_k)`** — Restricts the distribution `p` to its `top_k` most
   probable tokens and renormalises the probabilities to sum to one. The result
   has exactly `top_k` entries, with `p.probs[j]` the probability of the token
-  with id `p.toks[j]`. This means that row `j` of the $g$-value matrix returned
-  by `get_g_values(context, p.toks, key)` is associated with token `p.toks[j]`.
-  Watermarking is applied only after this truncation, so the watermarked
-  distribution never places mass outside the top `top_k` tokens.
+  with id `p.toks[j]`. This means that row `j` of the $`g`$-value matrix
+  returned by `get_g_values(context, p.toks, key)` is associated with token
+  `p.toks[j]`. Watermarking is applied only after this truncation, so the
+  watermarked distribution never places mass outside the top `top_k` tokens.
 - **Aligned supports** — When two distributions are compared or subtracted
   (`p[i][token]` and `p[i] - q[i]` in [Algorithm 5](#alg-speculative)) they are
   implicitly aligned on the union of their supports, with tokens missing from
-  one distribution given probability $0$; in particular a draft token outside
+  one distribution given probability $`0`$; in particular a draft token outside
   the target's `top_k` is always rejected.
 - **`hash(tokens, key)`** — A hash function mapping tokens and a key to
   pseudorandom integers.
@@ -108,11 +108,11 @@ The overall pipeline is illustrated in [Figure 1](#fig-pipeline).
 
 **Figure 1.** Pipeline for autoregressive generation with tournament
 watermarking (**without** speculative decoding). After each forward pass the
-next-token distribution $p$, restricted to its `top_k` most probable tokens, is
-either passed through unchanged (if `is_masked`) or reweighted by the tournament
-using pseudorandom $g$-values derived from the secret key and the preceding
-`context_len` tokens. The sampled token is appended and the loop repeats. See
-[Algorithms 1](#alg-g) to [4](#alg-autoregressive).
+next-token distribution $`p`$, restricted to its `top_k` most probable tokens,
+is either passed through unchanged (if `is_masked`) or reweighted by the
+tournament using pseudorandom $`g`$-values derived from the secret key and the
+preceding `context_len` tokens. The sampled token is appended and the loop
+repeats. See [Algorithms 1](#alg-g) to [4](#alg-autoregressive).
 
 <a id="alg-g"></a>
 
@@ -194,24 +194,24 @@ def sampling_engine(prompt):
 
 Two remarks. First, `tokens` contains only the generated tokens, not the prompt:
 the first `context_len` generated tokens are never watermarked and prompt
-$n$-grams do not count towards `is_masked`. This is a deliberate choice that
+$`n`$-grams do not count towards `is_masked`. This is a deliberate choice that
 keeps detection self-contained (the detector only needs the generated text), but
 an implementation that also draws context from the prompt is equally valid
 provided the detector has access to the prompt and does the same. Second,
 non-distortion is relative to whatever distribution is passed to `watermark`, so
 `watermark` must be the *last* transformation before `sample`: temperature, the
-engine's own top-$k$/top-$p$ truncation, repetition penalties and so on must all
-be applied before `get_top_k`, and nothing other than `sample` may be applied
-after `watermark`.
+engine's own top-$`k`$/top-$`p`$ truncation, repetition penalties and so on must
+all be applied before `get_top_k`, and nothing other than `sample` may be
+applied after `watermark`.
 
 ### 2.1 Speculative sampling
 
 Many serving engines use speculative sampling [[2]](#ref-2), [[3]](#ref-3),
 which uses a small drafting model to accelerate sampling. A single step of
 watermarked speculative sampling is illustrated in [Figure 2](#fig-speculative).
-The naive approach is to watermark both the draft and target distributions
-using the same key and run speculative decoding as normal. This is not
-recommended because it reduces the acceptance rate (see
+The naive approach is to watermark both the draft and target distributions using
+the same key and run speculative decoding as normal. This is not recommended
+because it reduces the acceptance rate (see
 [Section 5](#5-implementation-tips-and-notes)). In contrast, the dual-key
 approach described below ensures that watermarking does not change the
 acceptance rate in expectation.
@@ -221,18 +221,19 @@ acceptance rate in expectation.
 ![A single step of speculative sampling with dual-key tournament watermarking](figs/speculative.png)
 
 **Figure 2.** A single step of speculative sampling with dual-key tournament
-watermarking ([Algorithm 5](#alg-speculative)), shown for `draft_len` $=3$. The
-draft model proposes tokens $x_1, x_2, x_3$ autoregressively, each sampled from
-the draft distribution $q_i$ watermarked with `key_draft`. The target model then
-scores all positions in a single forward pass, giving $p_1, \dots, p_4$. Drafts
-are checked in order with $u_i \sim \mathcal U(0,1)$, and the acceptance test
-compares the *unwatermarked* distributions $p_i$ and $q_i$. At the first
-rejection, $x_i$ is replaced by a sample from the residual distribution
-$r_i \propto \max(0, p_i - q_i)$ watermarked with `key_target`, and the
+watermarking ([Algorithm 5](#alg-speculative)), shown for `draft_len` $`=3`$.
+The draft model proposes tokens $`x_1, x_2, x_3`$ autoregressively, each sampled
+from the draft distribution $`q_i`$ watermarked with `key_draft`. The target
+model then scores all positions in a single forward pass, giving
+$`p_1, \dots, p_4`$. Drafts are checked in order with
+$`u_i \sim \mathcal U(0,1)`$, and the acceptance test compares the
+*unwatermarked* distributions $`p_i`$ and $`q_i`$. At the first rejection,
+$`x_i`$ is replaced by a sample from the residual distribution
+$`r_i \propto \max(0, p_i - q_i)`$ watermarked with `key_target`, and the
 remaining drafts are discarded. If all drafts are accepted, a *bonus* token (an
 extra token, available at almost no cost from the same target forward pass) is
-sampled from $p_4$ watermarked with `key_target`. Either way, each step produces
-between $1$ and `draft_len` $+\,1$ tokens.
+sampled from $`p_4`$ watermarked with `key_target`. Either way, each step
+produces between $`1`$ and `draft_len` $`+\,1`$ tokens.
 
 <a id="alg-speculative"></a>
 
@@ -308,7 +309,7 @@ def frequentist_detector(tokens, key):
   return binomial(n, 0.5).sf(count - 1)
 ```
 
-**Algorithm 7.** Frequentist detector. Returns a $p$-value (close to zero
+**Algorithm 7.** Frequentist detector. Returns a $`p`$-value (close to zero
 implies detection).
 
 The detector should reproduce the generator's masking rule (including
@@ -316,15 +317,15 @@ The detector should reproduce the generator's masking rule (including
 actually carry signal. Note, however, that masking never depends on the key, so
 a mismatched mask (for example when the detector sees only a substring of the
 generated text) only loses power and never inflates the false positive rate:
-under the null the scored $g$-values remain i.i.d. $\mathrm{Ber}(1/2)$.
+under the null the scored $`g`$-values remain i.i.d. $`\mathrm{Ber}(1/2)`$.
 
 When speculative decoding is enabled, each generated token was sampled from a
 distribution watermarked with one of the two keys: `key_draft` for accepted
 drafts and `key_target` for resampled and bonus tokens. Which key was used is
-not recorded in the text, so the detector computes the $g$-values under both
-keys and aggregates them. For unwatermarked text the $g$-values under both keys
-are independent $\mathrm{Ber}(1/2)$ random variables, so the count is again
-binomial under the null, now with twice as many trials.
+not recorded in the text, so the detector computes the $`g`$-values under both
+keys and aggregates them. For unwatermarked text the $`g`$-values under both
+keys are independent $`\mathrm{Ber}(1/2)`$ random variables, so the count is
+again binomial under the null, now with twice as many trials.
 
 <a id="alg-detect-speculative"></a>
 
@@ -348,7 +349,7 @@ def speculative_detector(tokens, key_draft, key_target):
 ```
 
 **Algorithm 8.** Frequentist detector for speculative decoding with dual-key
-watermarking. Returns a $p$-value (close to zero implies detection).
+watermarking. Returns a $`p`$-value (close to zero implies detection).
 
 <!-- Single inline-math expressions below cannot be wrapped. -->
 <!-- disableFinding(LINE_OVER_80) -->
@@ -360,92 +361,92 @@ level* (a record is a single generation) when the keys are randomised. This
 means that if you sample `key` at random, then the distribution of the sampled
 tokens is the same as without watermarking. Here "at random" means uniformly
 from the key space of `hash` (e.g. 32-bit integers); all that is actually
-required is that the $g$-values are i.i.d. $\mathrm{Ber}(1/2)$ over the draw of
-the key. This is a consequence of the masking and the fact that the `watermark`
-scheme is locally non-distortionary: masking ensures that no context, and hence
-no set of $g$-values, is used twice within a record, so the $g$-values at
-different positions are independent and local non-distortion composes across
-positions. Strictly speaking this is only exact for records shorter than roughly
-`context_history_size` tokens, since a context that recurs more than
-`context_history_size` contexts later is not masked and its $g$-values are
-reused. The resulting distortion is negligible in practice, but it is the reason
-`context_history_size` should not be made small. To test this we recommend the
-following tests:
+required is that the $`g`$-values are i.i.d. $`\mathrm{Ber}(1/2)`$ over the draw
+of the key. This is a consequence of the masking and the fact that the
+`watermark` scheme is locally non-distortionary: masking ensures that no
+context, and hence no set of $`g`$-values, is used twice within a record, so the
+$`g`$-values at different positions are independent and local non-distortion
+composes across positions. Strictly speaking this is only exact for records
+shorter than roughly `context_history_size` tokens, since a context that recurs
+more than `context_history_size` contexts later is not masked and its
+$`g`$-values are reused. The resulting distortion is negligible in practice, but
+it is the reason `context_history_size` should not be made small. To test this
+we recommend the following tests:
 
-- **Local non-distortion** — For any next-token distribution $p$ and unmasked
+- **Local non-distortion** — For any next-token distribution $`p`$ and unmasked
   `tokens`, averaging the watermarked distribution `watermark(p, tokens, key)`
-  over random keys must recover $p$:
-  $\mathbb{E}_{\texttt{key}}[\texttt{watermark}(p, \texttt{tokens}, \texttt{key}).\texttt{probs}] = p.\texttt{probs}$.
+  over random keys must recover $`p`$:
+  $`\mathbb{E}_{\texttt{key}}[\texttt{watermark}(p, \texttt{tokens}, \texttt{key}).\texttt{probs}] = p.\texttt{probs}`$.
   See [Algorithm 9](#alg-test-distortion) for the basic sampler and
   [Algorithm 11](#alg-test-speculative) for a single step of speculative
   sampling with independent random `key_draft` and `key_target`.
-- **Signal** — Watermarking reweights $p$ toward tokens with larger $g$-values,
-  so for any non-degenerate $p$ the expected $g$-value of each layer under
-  `watermark(p, context, key)` is strictly greater than $1/2$. For the first
-  layer there is a closed form that holds under the *full* tournament: writing
-  $G_1 = \sum_x p(x) g_1(x)$, the first layer maps $p$ to
-  $p(x)(1 + g_1(x) - G_1)$, under which the expected $g_1$-value is
-  $2G_1 - G_1^2$. Layers $2, \dots,$ `depth` are locally non-distortionary,
+- **Signal** — Watermarking reweights $`p`$ toward tokens with larger
+  $`g`$-values, so for any non-degenerate $`p`$ the expected $`g`$-value of each
+  layer under `watermark(p, context, key)` is strictly greater than $`1/2`$. For
+  the first layer there is a closed form that holds under the *full* tournament:
+  writing $`G_1 = \sum_x p(x) g_1(x)`$, the first layer maps $`p`$ to
+  $`p(x)(1 + g_1(x) - G_1)`$, under which the expected $`g_1`$-value is
+  $`2G_1 - G_1^2`$. Layers $`2, \dots,`$ `depth` are locally non-distortionary,
   so averaging over their keys returns the layer-1 output, and since the
-  expected $g_1$-value is linear in the distribution this does not change it.
-  Taking the expectation over $g_1 \sim \mathrm{Ber}(1/2)$ i.i.d. with $p$ fixed
-  gives
-  $\mathbb{E}_{\texttt{key}}\big[\sum_x p_{\mathrm{wm}}(x)\, g_1(x)\big] = \tfrac{1}{2} + \tfrac{1}{4}\big(1 - \sum_x p(x)^2\big)$.
+  expected $`g_1`$-value is linear in the distribution this does not change it.
+  Taking the expectation over $`g_1 \sim \mathrm{Ber}(1/2)`$ i.i.d. with $`p`$
+  fixed gives
+  $`\mathbb{E}_{\texttt{key}}\big[\sum_x p_{\mathrm{wm}}(x)\, g_1(x)\big] = \tfrac{1}{2} + \tfrac{1}{4}\big(1 - \sum_x p(x)^2\big)`$.
   For later layers the same argument gives
-  $\tfrac{1}{2} + \tfrac{1}{4}(1 - \sum_x p^{(i-1)}(x)^2)$ where $p^{(i-1)}$ is
-  the (random) input to layer $i$; this has no closed form because
-  $\sum_x p^{(i-1)}(x)^2$ is nonlinear, but it is strictly greater than $1/2$
-  and decreases with depth. [Algorithm 10](#alg-test-signal) checks the layer-1
-  value exactly and positivity for the remaining layers.
+  $`\tfrac{1}{2} + \tfrac{1}{4}(1 - \sum_x p^{(i-1)}(x)^2)`$ where $`p^{(i-1)}`$
+  is the (random) input to layer $`i`$; this has no closed form because
+  $`\sum_x p^{(i-1)}(x)^2`$ is nonlinear, but it is strictly greater than
+  $`1/2`$ and decreases with depth. [Algorithm 10](#alg-test-signal) checks the
+  layer-1 value exactly and positivity for the remaining layers.
 - **Global non-distortion** — You can test global non-distortion by selecting a
   wide range of metrics for a given generation. E.g., number of sampled tokens,
-  distributions of $n$-grams. Then compare the distribution of these metrics
+  distributions of $`n`$-grams. Then compare the distribution of these metrics
   without watermarking to the distribution with watermarking but with keys
   randomised on each generation.
 - **Acceptance rate** — The watermarked speculative decoding is designed to have
   the same acceptance rate as the classical unwatermarked version. This should
   be tested; see [Algorithm 11](#alg-test-speculative).
 - **Diversity** — Each tournament layer concentrates mass on tokens with
-  favourable $g$-values, so for a fixed key the entropy of the watermarked
-  distribution decreases with `depth`; with very many layers the
-  watermarked model is close to deterministic for a fixed key, which is
-  undesirable for many applications. Dual-key speculative decoding mitigates
-  this: accepted drafts are watermarked under `key_draft` and resampled/bonus
-  tokens under `key_target`, so the generated sequence is a mixture over two
-  independent tournaments and is typically more diverse than single-key
-  autoregressive sampling with the same `depth`. This should be measured
-  with the same metrics as the global non-distortion test.
+  favourable $`g`$-values, so for a fixed key the entropy of the watermarked
+  distribution decreases with `depth`; with very many layers the watermarked
+  model is close to deterministic for a fixed key, which is undesirable for many
+  applications. Dual-key speculative decoding mitigates this: accepted drafts
+  are watermarked under `key_draft` and resampled/bonus tokens under
+  `key_target`, so the generated sequence is a mixture over two independent
+  tournaments and is typically more diverse than single-key autoregressive
+  sampling with the same `depth`. This should be measured with the same metrics
+  as the global non-distortion test.
 - **Evaluations** — Once the implementation is solid, you should perform
   evaluations *with the production keys*. The theoretical guarantees of the
   watermarking procedure are all with respect to random keys. If the g-values
-  associated with a frequently occurring $n$-gram are particularly
+  associated with a frequently occurring $`n`$-gram are particularly
   disadvantageous, then watermarking can reduce quality. This must be tested
   with a full suite of downstream evaluations.
-- **Controlled FPR** — Run the detector with the wrong key to check
-  that the false positive rate is controlled, and be precise about what is
-  guaranteed. Write $\mathrm{detect}(x, \texttt{key})$ for the $p$-value
-  returned by the detector and, for a distribution $\xi$ over unwatermarked
-  texts, let
-  $\mathrm{FPR}(\xi, \texttt{key}, \alpha) = \mathbb{P}_{x \sim \xi}\big(\mathrm{detect}(x, \texttt{key}) < \alpha\big)$
-  be the false positive rate at level $\alpha$ for a *fixed* key. The binomial
-  null is a statement about the draw of the key: for every fixed text $x$,
-  $\mathbb{P}_{\texttt{key}}(\mathrm{detect}(x, \texttt{key}) < \alpha) \le \alpha$.
-  Averaging over $x \sim \xi$ gives
-  $\mathbb{E}_{\texttt{key}}[\mathrm{FPR}(\xi, \texttt{key}, \alpha)] \le \alpha$,
+- **Controlled FPR** — Run the detector with the wrong key to check that the
+  false positive rate is controlled, and be precise about what is guaranteed.
+  Write $`\mathrm{detect}(x, \texttt{key})`$ for the $`p`$-value returned by the
+  detector and, for a distribution $`\xi`$ over unwatermarked texts, let
+  $`\mathrm{FPR}(\xi, \texttt{key}, \alpha) = \mathbb{P}_{x \sim \xi}\big(\mathrm{detect}(x, \texttt{key}) < \alpha\big)`$
+  be the false positive rate at level $`\alpha`$ for a *fixed* key. The binomial
+  null is a statement about the draw of the key: for every fixed text $`x`$,
+  $`\mathbb{P}_{\texttt{key}}(\mathrm{detect}(x, \texttt{key}) < \alpha) \le \alpha`$.
+  Averaging over $`x \sim \xi`$ gives
+  $`\mathbb{E}_{\texttt{key}}[\mathrm{FPR}(\xi, \texttt{key}, \alpha)] \le \alpha`$,
   but nothing more: for the one key you actually deploy,
-  $\mathrm{FPR}(\xi, \texttt{key}, \alpha)$ is a random variable with mean at
-  most $\alpha$, and
-  $\mathbb{P}_{\texttt{key}}(\mathrm{FPR}(\xi, \texttt{key}, \alpha) > \alpha)$
-  can be large. The extreme case is $\xi$ a point mass on a single text, where
-  $\mathrm{FPR} \in \{0, 1\}$ and equals $1$ with probability up to $\alpha$.
-  The mechanism for realistic $\xi$ is shared $n$-grams: for a fixed key every
-  text containing the same (`context_len` $+ 1$)-gram sees the same $g$-values,
-  so if the production key happens to assign high $g$-values to common $n$-grams
-  then the FPR is inflated for all texts simultaneously. The more diverse $\xi$
-  is, the more tightly $\mathrm{FPR}(\xi, \texttt{key}, \alpha)$ concentrates
-  around its mean, which is why in practice we never observe a problem, but you
-  should nevertheless calibrate on unwatermarked data with the production keys
-  rather than rely on the nominal $p$-value alone.
+  $`\mathrm{FPR}(\xi, \texttt{key}, \alpha)`$ is a random variable with mean at
+  most $`\alpha`$, and
+  $`\mathbb{P}_{\texttt{key}}(\mathrm{FPR}(\xi, \texttt{key}, \alpha) > \alpha)`$
+  can be large. The extreme case is $`\xi`$ a point mass on a single text, where
+  $`\mathrm{FPR} \in \{0, 1\}`$ and equals $`1`$ with probability up to
+  $`\alpha`$. The mechanism for realistic $`\xi`$ is shared $`n`$-grams: for a
+  fixed key every text containing the same (`context_len` $`+ 1`$)-gram sees the
+  same $`g`$-values, so if the production key happens to assign high
+  $`g`$-values to common $`n`$-grams then the FPR is inflated for all texts
+  simultaneously. The more diverse $`\xi`$ is, the more tightly
+  $`\mathrm{FPR}(\xi, \texttt{key}, \alpha)`$ concentrates around its mean,
+  which is why in practice we never observe a problem, but you should
+  nevertheless calibrate on unwatermarked data with the production keys rather
+  than rely on the nominal $`p`$-value alone.
 
 <a id="alg-test-distortion"></a>
 
@@ -546,13 +547,13 @@ sampling
   be able to delete in LIFO order.
 - There is an alternative version of speculative decoding where both the target
   and draft distributions are watermarked with the same key. A token is accepted
-  if $u < \min(1, p_{wm}(x) / q_{wm}(x))$ and the residual is
-  $r \propto \max(0, p_{wm} - q_{wm})$. This version has the advantage that you
-  can use the single key detector and the detection signal is stronger. On the
-  downside, the speculative sampling rate drops: for a fixed key the acceptance
-  probability is $\sum_x \min(p_{wm}(x), q_{wm}(x))$ and, since $\min$ is
-  concave, Jensen's inequality gives
-  $\mathbb{E}_{\text{key}} \sum_x \min(p_{wm}(x), q_{wm}(x)) \le \sum_x \min(\mathbb{E}\, p_{wm}(x), \mathbb{E}\, q_{wm}(x)) = \sum_x \min(p(x), q(x))$,
+  if $`u < \min(1, p_{wm}(x) / q_{wm}(x))`$ and the residual is
+  $`r \propto \max(0, p_{wm} - q_{wm})`$. This version has the advantage that
+  you can use the single key detector and the detection signal is stronger. On
+  the downside, the speculative sampling rate drops: for a fixed key the
+  acceptance probability is $`\sum_x \min(p_{wm}(x), q_{wm}(x))`$ and, since
+  $`\min`$ is concave, Jensen's inequality gives
+  $`\mathbb{E}_{\text{key}} \sum_x \min(p_{wm}(x), q_{wm}(x)) \le \sum_x \min(\mathbb{E}\, p_{wm}(x), \mathbb{E}\, q_{wm}(x)) = \sum_x \min(p(x), q(x))`$,
   with strict inequality whenever watermarking is not a no-op. Hence this
   exchanges throughput for detectability.
 - You should experiment with the number of draft and target layers. The Bayesian
@@ -566,12 +567,12 @@ sampling
 
 ## 6. References
 
-1. <a id="ref-1"></a>Dathathri, S., See, A., Ghaisas, S., Huang, P.-S.,
-   McAdam, R., Welbl, J., Bachani, V., Kaskasoli, A., Stanforth, R.,
-   Matejovicova, T., Hayes, J., Vyas, N., Merey, M. A., Brown-Cohen, J., Bunel,
-   R., Balle, B., Cemgil, T., Ahmed, Z., Stacpoole, K., Shumailov, I., Baetu,
-   C., Gowal, S., Hassabis, D., and Kohli, P. *Scalable watermarking for
-   identifying large language model outputs.* Nature **634**, 818–823 (2024).
+1. <a id="ref-1"></a>Dathathri, S., See, A., Ghaisas, S., Huang, P.-S., McAdam,
+   R., Welbl, J., Bachani, V., Kaskasoli, A., Stanforth, R., Matejovicova, T.,
+   Hayes, J., Vyas, N., Merey, M. A., Brown-Cohen, J., Bunel, R., Balle, B.,
+   Cemgil, T., Ahmed, Z., Stacpoole, K., Shumailov, I., Baetu, C., Gowal, S.,
+   Hassabis, D., and Kohli, P. *Scalable watermarking for identifying large
+   language model outputs.* Nature **634**, 818–823 (2024).
    [doi:10.1038/s41586-024-08025-4](https://doi.org/10.1038/s41586-024-08025-4)
 2. <a id="ref-2"></a>Leviathan, Y., Kalman, M., and Matias, Y. *Fast inference
    from transformers via speculative decoding.* ICML (2023).
