@@ -93,6 +93,10 @@ pytest .
 
 ## How it works
 
+For a description of tournament watermarking, speculative sampling with
+dual-key watermarking, detection, and recommended tests, with pseudocode, see
+[docs/tournament.md](./docs/tournament.md).
+
 ### Defining a watermark configuration
 
 SynthID Text produces unique watermarks given a configuration, with the key
