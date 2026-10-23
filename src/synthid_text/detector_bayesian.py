@@ -44,7 +44,19 @@ def pad_to_len(
     pad_value: int,
     device: torch.device,
 ) -> torch.Tensor:
-  """Pad or truncate array to given length."""
+  """Pads or truncates arr along dim 1 to target_len.
+
+  Args:
+    arr: Tensor of shape (batch_size, seq_len, ...).
+    target_len: Size of dim 1 of the returned tensor.
+    left_pad: If True, padding is added on the left, otherwise on the right.
+    pad_value: Value used for the padding.
+    device: Torch device on which the padding is created.
+
+  Returns:
+    Tensor of shape (batch_size, target_len, ...). If seq_len >= target_len,
+    arr is truncated to its first target_len entries along dim 1.
+  """
   if arr.shape[1] < target_len:
     shape_for_ones = list(arr.shape)
     shape_for_ones[1] = target_len - shape_for_ones[1]
@@ -69,16 +81,19 @@ def filter_and_truncate(
     truncation_length: int | None,
     eos_token_mask: torch.Tensor,
 ) -> torch.Tensor:
-  """Filter and truncate outputs to given length.
+  """Filters and truncates outputs to truncation_length.
 
   Args:
-   outputs: output tensor of shape [batch_size, output_len]
-   truncation_length: Length to truncate the final output. If None, then no
-     truncation is applied.
-   eos_token_mask: EOS token mask of shape [batch_size, output_len]
+    outputs: Token IDs of shape (batch_size, output_len).
+    truncation_length: Number of tokens to keep per row. If None (or 0), no
+      filtering or truncation is applied.
+    eos_token_mask: Boolean array of shape (batch_size, output_len) that is True
+      at positions before the first EOS token of each row.
 
   Returns:
-   output tensor of shape [batch_size, truncation_length].
+    The rows of outputs with at least truncation_length tokens before the
+    first EOS token, truncated to shape (num_kept, truncation_length). If
+    truncation_length is None (or 0), outputs is returned unchanged.
   """
   if truncation_length:
     outputs = outputs[:, :truncation_length]
@@ -96,22 +111,33 @@ def process_outputs_for_training(
     max_length: int,
     torch_device: torch.device,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-  """Process raw model outputs into format understandable by the detector.
+  """Processes raw model outputs into masks and g-values for the detector.
+
+  The number of kept and total rows is logged at INFO level.
 
   Args:
-   all_outputs: sequence of outputs of shape [batch_size, output_len].
-   logits_processor: logits processor used for watermarking.
-   eos_token_id: EOS token ID or sequence of EOS token IDs.
-   truncation_length: Length to truncate the outputs. If None, then no
-     truncation is applied.
-   max_length: Length to pad truncated outputs so that all processed entries.
-     have same shape.
-   torch_device: torch device to use.
+    all_outputs: Sequence of token ID batches, each of shape (batch_size,
+      output_len), with the prompt removed. output_len can differ between
+      batches.
+    logits_processor: Logits processor used for watermarking.
+    eos_token_id: EOS token ID or sequence of EOS token IDs.
+    truncation_length: Truncation length for the outputs. Rows with fewer tokens
+      before the first EOS token are dropped. If None, no filtering or
+      truncation is applied.
+    max_length: Length to which filtered outputs are padded (with EOS tokens) or
+      truncated, so that all processed entries have the same shape.
+    torch_device: Torch device to use.
 
   Returns:
-    Tuple of
-      all_masks: list of masks of shape [batch_size, max_length].
-      all_g_values: list of g_values of shape [batch_size, max_length, depth].
+    Tuple (all_masks, all_g_values), with one entry per batch that has at
+    least one row left after filtering (both lists are empty if no row is
+    left):
+      all_masks: List of 0/1 masks of shape (num_kept, max_length).
+      all_g_values: List of g-values of shape (num_kept, max_length,
+        watermarking_depth).
+
+  Raises:
+    ValueError: If truncation_length is larger than max_length.
   """
   if truncation_length is not None and truncation_length > max_length:
     raise ValueError(
@@ -197,31 +223,31 @@ class LikelihoodModel(abc.ABC):
 
   @abc.abstractmethod
   def __call__(self, g_values: jnp.ndarray) -> jnp.ndarray:
-    """Computes likelihoods given g-values and a mask.
+    """Computes likelihoods given g-values.
 
     Args:
-      g_values: g-values (all are 0 or 1) of shape [batch_size, seq_len,
-        watermarking_depth, ...].
+      g_values: g-values (all are 0 or 1) of shape (batch_size, seq_len,
+        watermarking_depth, ...).
 
     Returns:
-      an array of shape [batch_size, seq_len, watermarking_depth] or
-      [batch_size, seq_len, 1] corresponding to the likelihoods
+      An array of shape (batch_size, seq_len, watermarking_depth) or
+      (batch_size, seq_len, 1) corresponding to the likelihoods
       of the g-values given either the watermarked hypothesis or
-      the unwatermarked hypothesis; i.e. either P(g|watermarked)
-      or P(g|unwatermarked).
+      the unwatermarked hypothesis; i.e. either P(g | watermarked)
+      or P(g | unwatermarked).
     """
 
 
 class LikelihoodModelWatermarked(nn.Module, LikelihoodModel):
   """Watermarked likelihood model for binary-valued g-values.
 
-  This takes in g-values and returns P(g_values|watermarked).
+  This takes in g-values and returns P(g-values | watermarked).
   """
 
   watermarking_depth: int
 
   def setup(self):
-    """Initializes the model parameters."""
+    """Initializes the model parameters from the "params" rng."""
     self.beta = self.param(
         "beta",
         lambda rng: -2.5
@@ -236,6 +262,7 @@ class LikelihoodModelWatermarked(nn.Module, LikelihoodModel):
     )
 
   def l2_loss(self) -> jnp.ndarray:
+    """Returns the sum of squared delta parameters."""
     return jnp.einsum("ijkl->", self.delta**2)
 
   def _compute_latents(
@@ -244,45 +271,45 @@ class LikelihoodModelWatermarked(nn.Module, LikelihoodModel):
     """Computes the unique token probability distribution given g-values.
 
     Args:
-      g_values: Pseudorandom function values of shape [batch_size, seq_len,
-        watermarking_depth].
+      g_values: Pseudorandom function values of shape (batch_size, seq_len,
+        watermarking_depth).
 
     Returns:
       p_one_unique_token and p_two_unique_tokens, both of shape
-        [batch_size, seq_len, watermarking_depth]. p_one_unique_token[i,t,l]
+        (batch_size, seq_len, watermarking_depth). p_one_unique_token[i,t,l]
         gives the probability of there being one unique token in a tournament
         match on layer l, on timestep t, for batch item i.
-        p_one_unique_token[i,t,l] + p_two_unique_token[i,t,l] = 1.
+        p_one_unique_token[i,t,l] + p_two_unique_tokens[i,t,l] = 1.
     """
     # Tile g-values to produce feature vectors for predicting the latents
     # for each layer in the tournament; our model for the latents psi is a
     # logistic regression model psi = sigmoid(delta * x + beta).
     x = jnp.repeat(
         jnp.expand_dims(g_values, axis=-2), self.watermarking_depth, axis=-2
-    )  # [batch_size, seq_len, watermarking_depth, watermarking_depth]
+    )  # (batch_size, seq_len, watermarking_depth, watermarking_depth)
 
     x = jnp.tril(
         x, k=-1
-    )  # [batch_size, seq_len, watermarking_depth, watermarking_depth]
+    )  # mask all elements above -1 diagonal for autoregressive factorization
 
     logits = (
         jnp.einsum("ijkl,ijkl->ijk", self.delta, x) + self.beta
-    )  # [batch_size, seq_len, watermarking_depth]
+    )  # (batch_size, seq_len, watermarking_depth)
 
     p_two_unique_tokens = jax.nn.sigmoid(logits)
     p_one_unique_token = 1 - p_two_unique_tokens
     return p_one_unique_token, p_two_unique_tokens
 
   def __call__(self, g_values: jnp.ndarray) -> jnp.ndarray:
-    """Computes the likelihoods P(g_values|watermarked).
+    """Computes the likelihoods P(g-values | watermarked).
 
     Args:
-      g_values: g-values (values 0 or 1) of shape [batch_size, seq_len,
-        watermarking_depth]
+      g_values: g-values (values 0 or 1) of shape (batch_size, seq_len,
+        watermarking_depth).
 
     Returns:
-      p(g_values|watermarked) of shape [batch_size, seq_len,
-      watermarking_depth].
+      P(g-values | watermarked) of shape (batch_size, seq_len,
+      watermarking_depth).
     """
     p_one_unique_token, p_two_unique_tokens = self._compute_latents(g_values)
 
@@ -294,21 +321,20 @@ class LikelihoodModelWatermarked(nn.Module, LikelihoodModel):
 class LikelihoodModelUnwatermarked(nn.Module, LikelihoodModel):
   """Unwatermarked likelihood model for binary-valued g-values.
 
-  This takes in g-values and returns p(g_values | not watermarked).
+  This takes in g-values and returns P(g-values | not watermarked).
   """
 
   @nn.compact
   def __call__(self, g_values: jnp.ndarray) -> jnp.ndarray:
-    """Computes the likelihoods P(g-values|not watermarked).
+    """Computes the likelihoods P(g-values | not watermarked).
 
     Args:
-      g_values: g-values (0 or 1 values) of shape [batch_size, seq_len,
-        watermarking_depth, ...].
+      g_values: g-values (0 or 1 values) of shape (batch_size, seq_len,
+        watermarking_depth, ...).
 
     Returns:
       Likelihoods of g-values given text is unwatermarked --
-      p(g_values | not watermarked) of shape [batch_size, seq_len,
-      watermarking_depth].
+      P(g-values | not watermarked), of the same shape as g_values.
     """
     return 0.5 * jnp.ones_like(g_values)  # all g-values have prob 0.5.
 
@@ -317,18 +343,28 @@ class BayesianDetectorModule(nn.Module):
   """Bayesian classifier for watermark detection Flax Module.
 
   This detector uses Bayes' rule to compute a watermarking score, which is
-  the posterior probability P(watermarked|g_values) that the text is
-  watermarked, given its g_values.
+  the posterior probability P(watermarked | g-values) that the text is
+  watermarked, given its g-values.
 
-  Note that this detector only works with Tournament-based watermarking using
-  the Bernoulli(0.5) g-value distribution.
+  Note that this detector assumes Tournament-based watermarking with
+  num_leaves=2 and Bernoulli(0.5) g-values.
+
+  The prior log-odds log(P(watermarked) / P(unwatermarked)) is the trainable
+  parameter `prior_log_odds`, initialised to `logit(baserate)`. `train` updates
+  it together with the likelihood parameters, so after training it reflects the
+  class balance of the training data rather than `baserate`.
   """
 
   watermarking_depth: int  # The number of tournament layers.
   params: Mapping[str, Mapping[str, Any]] | None = None
-  baserate: float = 0.5  # Prior probability P(w) that a text is watermarked.
+  # Initial probability P(w) that a text is watermarked (stored as log-odds).
+  baserate: float = 0.5
 
   def l2_loss(self) -> jnp.ndarray:
+    """Returns the L2 penalty on the delta parameters.
+
+    These are the delta parameters of the watermarked likelihood model.
+    """
     return self.likelihood_model_watermarked.l2_loss()
 
   def setup(self):
@@ -400,7 +436,24 @@ def loss_fn(
     l2_batch_weight: float,
     detector_module: BayesianDetectorModule,
 ) -> jnp.ndarray:
-  """Calculates the loss for a batch of data given parameters."""
+  """Computes the training loss for a batch of data given parameters.
+
+  The loss is the mean sigmoid cross-entropy of the posterior log-odds plus
+  l2_batch_weight times the L2 penalty on the delta parameters.
+
+  Args:
+    params: Parameters of detector_module.
+    detector_inputs: Tuple (g_values, mask) where g_values has shape
+      (batch_size, seq_len, watermarking_depth) and mask is a Boolean or 0/1
+      array (batch_size, seq_len) indicating which g-values are used; g-values
+      where the mask is False (0) are ignored.
+    w_true: Labels in {0, 1} (1: watermarked), shape (batch_size,).
+    l2_batch_weight: Weight of the L2 penalty for this batch.
+    detector_module: The detector module to apply.
+
+  Returns:
+    Scalar loss.
+  """
   w_logits = detector_module.apply(params, *detector_inputs)
   unweighted_l2 = detector_module.apply(params, method=detector_module.l2_loss)
   l2_loss = l2_batch_weight * unweighted_l2  # pyrefly: ignore[unsupported-operation]
@@ -510,41 +563,50 @@ def train(
     validation_metric: ValidationMetric = ValidationMetric.TPR_AT_FPR,
     verbose: bool = False,
 ) -> tuple[Mapping[int, Mapping[str, PyTree]], float]:
-  """Train detector based on wm and uwm data.
+  """Trains a Bayesian detector model.
 
   Args:
-    detector_module: Bayesian detector module.
-    g_values: g_values of shape [num_train, seq_len, watermarking_depth].
-    mask: binary mask of shape [num_train, seq_len].
-    watermarked: binary array indicating whether each entry is watermarked of
-      shape [num_train].
-    g_values_val: validation g-values of shape [num_val, seq_len,
-      watermarking_depth].
-    mask_val: validation mask of shape [num_val, seq_len].
-    watermarked_val: validation watermark labels of shape [num_val].
-    epochs: number of epochs to train.
-    learning_rate: learning rate to use.
-    minibatch_size: minibatch size to use. We suggest setting this such that
-      minibatch_size * seq_len * depth is not too large so that the memory
-      doesn't exceed the GPU memory. Each entry of g-values of shape
-      [batch_size, seq_len, depth] creates a tensor of shape [batch_size,
-      seq_len, depth, depth] for predictions which approximately takes ~ 32 *
-      minibatch_size * seq_len * depth * depth bits of memory.
-    l2_weight: weight to apply to L2 regularization for delta parameters.
-    shuffle: whether to shuffle before training.
-    seed: seed for parameter initialization.
-    validation_metric: validation metric to use.
-    verbose: boolean indicating verbosity of training. If true, the loss will be
-      printed. Defaulted to False.
+    detector_module: The detector module to train. On return its params are set
+      to those from the epoch with the lowest validation loss.
+    g_values: g-values of shape (num_train, seq_len, watermarking_depth).
+    mask: Boolean or 0/1 array (num_train, seq_len) indicating which g-values
+      are used; g-values where the mask is False (0) are ignored.
+    watermarked: A binary array of shape (num_train,) indicating whether the
+      example is watermarked (0: unwatermarked, 1: watermarked).
+    g_values_val: Validation g-values of shape (num_val, seq_len,
+      watermarking_depth).
+    mask_val: Validation mask of shape (num_val, seq_len), in the same format as
+      mask.
+    watermarked_val: Validation watermark labels of shape (num_val,).
+    epochs: Number of epochs to train for.
+    learning_rate: Learning rate for optimizer.
+    minibatch_size: Minibatch size for training. Note that a minibatch requires
+      ~ 32 * minibatch_size * seq_len * watermarking_depth * watermarking_depth
+      bits of memory.
+    l2_weight: Weight to apply to L2 regularization for delta parameters.
+    shuffle: Whether to shuffle the training data once before training.
+    seed: Seed for parameter initialization and shuffling.
+    validation_metric: Validation metric used to select the best epoch.
+    verbose: Boolean indicating verbosity of training. If True, the training and
+      validation losses are printed each epoch. Defaults to False.
 
   Returns:
-    Tuple of
-      training_history: training history keyed by epoch number where the values
-      are
-        dictionaries containing the loss, validation loss, and model parameters,
-        keyed by
-        'loss', 'val_loss', and 'params', respectively.
-      min_val_loss: minimum validation loss achieved during training.
+    Tuple (training_history, min_val_loss):
+      training_history: Dict keyed by epoch number (starting at 1) whose
+        values are dicts with keys 'loss' (training loss averaged over the
+        epoch's minibatches, weighted by minibatch size, including each
+        minibatch's L2 term), 'val_loss' (validation loss) and 'params'
+        (model parameters after that epoch).
+      min_val_loss: Lowest validation loss over epochs. This is -TPR at 1%
+        FPR when validation_metric is TPR_AT_FPR, and the cross-entropy
+        otherwise. Since the epoch is selected on the validation data, this
+        is an optimistically biased estimate of held-out performance.
+
+  Raises:
+    ValueError: If epochs < 1, if the training or validation loss of any
+      epoch is not finite (NaN or inf), or if validation_metric is TPR_AT_FPR
+      and the validation data has no watermarked or no unwatermarked
+      examples.
   """
   if epochs < 1:
     raise ValueError(f"epochs must be >= 1, but is {epochs}")
@@ -561,7 +623,7 @@ def train(
     g_values, mask, watermarked = coshuffle(g_values, mask, watermarked)
 
   def update_fn_if_fpr_tpr(params):
-    """Loss function for negative TPR@FPR=1% as the validation loss."""
+    """Returns the validation loss -TPR at 1% FPR."""
     tpr_ = tpr_at_fpr(
         params=params,
         detector_inputs=(g_values_val, mask_val),
@@ -600,7 +662,7 @@ def train(
     return loss, params, opt_state
 
   def update_with_minibatches(gvalues, masks, labels, inds, params, opt_state):
-    """Update params iff opt_state is not None and always returns the loss."""
+    """Runs one epoch of updates; returns (mean loss, params, opt_state)."""
     # loss_fn returns a mean over the minibatch and the last minibatch can be
     # smaller, so the epoch loss is weighted by minibatch size.
     weighted_loss_sum = 0.0
@@ -620,7 +682,7 @@ def train(
     return float(weighted_loss_sum / num_examples), params, opt_state
 
   def validate_with_minibatches(gvalues, masks, labels, inds, params):
-    """Update params iff opt_state is not None and always returns the loss."""
+    """Returns the validation loss, weighted by minibatch size."""
     weighted_loss_sum = 0.0
     num_examples = 0
     for start in inds:
@@ -636,7 +698,7 @@ def train(
     return float(weighted_loss_sum / num_examples)
 
   def update_fn(opt_state, params):
-    """Updates the model parameters and returns the loss."""
+    """Runs one training epoch; returns opt_state, params, loss and val_loss."""
     loss, params, opt_state = update_with_minibatches(
         g_values, mask, watermarked, minibatch_inds, params, opt_state
     )
@@ -731,7 +793,17 @@ class BayesianDetector:
       eos_token_id: int | Sequence[int],
       params: Mapping[str, Mapping[str, Any]],
   ):
+    """Initializes the detector.
 
+    Args:
+      logits_processor: Logits processor used for watermarking. Its depth sets
+        the watermarking_depth of the detector module.
+      eos_token_id: EOS token ID or sequence of EOS token IDs.
+      params: Trained parameters of the BayesianDetectorModule.
+
+    Raises:
+      ValueError: If the logits processor's num_leaves is not 2.
+    """
     _check_num_leaves_is_two(logits_processor)
     self.detector_module = BayesianDetectorModule(
         watermarking_depth=logits_processor.depth,
@@ -741,15 +813,25 @@ class BayesianDetector:
     self.eos_token_id = eos_token_id
 
   def score(self, outputs: torch.LongTensor) -> jnp.ndarray:
-    """Score the model output for possibility of being watermarked.
+    """Scores the model outputs for the possibility of being watermarked.
 
     Score is within [0, 1] where 0 is not watermarked and 1 is watermarked.
 
+    Rows with no scored positions (fewer than ngram_len tokens before the
+    first EOS token, or all positions masked) get sigmoid(logit(prior)), where
+    prior is the trained `prior` parameter (clipped to [1e-5, 1 - 1e-5]).
+    After training this reflects the class balance of the training data, so
+    such rows are not scored as 0.
+
     Args:
-      outputs: model output of shape [batch_size, output_len]
+      outputs: Generated token IDs of shape (batch_size, output_len), with the
+        prompt removed.
 
     Returns:
-      scores of shape [batch_size]
+      Posterior P(watermarked | g-values) of shape (batch_size,).
+
+    Raises:
+      ValueError: If detector_module.params is None.
     """
     if self.detector_module.params is None:
       raise ValueError("params must be set before calling score")
@@ -786,26 +868,50 @@ class BayesianDetector:
       jnp.ndarray,
       jnp.ndarray,
   ]:
-    """Process raw models outputs into inputs we can train.
+    """Processes raw model outputs into training and cross-validation inputs.
+
+    The number of rows kept after filtering is logged for each split.
 
     Args:
-      tokenized_wm_outputs: tokenized outputs of watermarked data.
-      tokenized_uwm_outputs: tokenized outputs of unwatermarked data.
-      logits_processor: logits processor used for watermarking.
+      tokenized_wm_outputs: Watermarked outputs. Sequence of 2-D token ID
+        batches (batch_size, output_len), prompt removed.
+      tokenized_uwm_outputs: Unwatermarked outputs. Sequence of 2-D token ID
+        batches (batch_size, output_len), prompt removed.
+      logits_processor: Logits processor used for watermarking.
       eos_token_id: EOS token ID or sequence of EOS token IDs.
-      torch_device: torch device to use.
-      test_size: test size to use for train-test split.
-      pos_truncation_length: Length to truncate wm outputs. If None, no
-        truncation is applied.
-      neg_truncation_length: Length to truncate uwm outputs. If None, no
-        truncation is done.
-      max_padded_length: Length to pad truncated outputs so that all processed
-        entries have same shape.
-      seed: seed for train-test split.
+      torch_device: Torch device to use.
+      test_size: Fraction of batches held out for cross-validation. The split is
+        random and applied to the sequence of batches.
+      pos_truncation_length: Truncation length used for watermarked outputs and
+        for all cross-validation outputs. Rows with fewer tokens before the
+        first EOS token are dropped. If None, no filtering or truncation is
+        applied.
+      neg_truncation_length: Truncation length used only for unwatermarked
+        training outputs (cross-validation outputs use pos_truncation_length).
+        Rows with fewer tokens before the first EOS token are dropped. If None,
+        no filtering or truncation is applied.
+      max_padded_length: Length to which filtered outputs are padded (with EOS
+        tokens), so that all processed entries have the same shape. If None,
+        max(pos_truncation_length, neg_truncation_length) is used. Rows longer
+        than this (only possible if a truncation length is None) are truncated.
+      seed: Seed for the train/CV splits and the shuffling within each split.
 
     Returns:
-      Tuple of 6 arrays (train_g_values, train_masks, train_labels, cv_g_values,
-      cv_masks, cv_labels).
+      Tuple (train_g_values, train_masks, train_labels, cv_g_values, cv_masks,
+      cv_labels), each shuffled within its split:
+        train_g_values: g-values (num_train, max_padded_length,
+          watermarking_depth).
+        train_masks: 0/1 masks (num_train, max_padded_length).
+        train_labels: Boolean labels (num_train,), True for watermarked.
+        cv_g_values: g-values (num_cv, max_padded_length, watermarking_depth).
+        cv_masks: 0/1 masks (num_cv, max_padded_length).
+        cv_labels: Boolean labels (num_cv,), True for watermarked.
+
+    Raises:
+      ValueError: If max_padded_length is None and a truncation length is
+        None, if max_padded_length is smaller than a truncation length, or if
+        any of the four splits (watermarked/unwatermarked x train/CV) has no
+        rows left after filtering.
     """
     if max_padded_length is None:
       if pos_truncation_length is None or neg_truncation_length is None:
@@ -943,7 +1049,42 @@ class BayesianDetector:
       verbose: bool = False,
       seed: int = 0,
   ) -> tuple["BayesianDetector", float]:
-    """Train best detector given g_values, mask and labels."""
+    """Trains detectors on given g-values, masks and labels; returns the best.
+
+    Args:
+      train_g_values: Training g-values (num_train, seq_len,
+        watermarking_depth).
+      train_masks: Boolean or 0/1 array (num_train, seq_len) indicating which
+        g-values are used; g-values where the mask is False (0) are ignored.
+      train_labels: Training labels (num_train,), 1 (True) for watermarked.
+      cv_g_values: Cross-validation g-values (num_cv, seq_len,
+        watermarking_depth).
+      cv_masks: Cross-validation masks (num_cv, seq_len), in the same format as
+        train_masks.
+      cv_labels: Cross-validation labels (num_cv,), 1 (True) for watermarked.
+      logits_processor: Logits processor used for watermarking.
+      eos_token_id: EOS token ID or sequence of EOS token IDs.
+      n_epochs: Number of epochs to train each detector.
+      learning_rate: Learning rate to use for training each detector.
+      l2_weights: Candidate L2 weights; one detector is trained per weight and
+        the one with the lowest CV loss is returned.
+      verbose: Whether to print training progress.
+      seed: Seed for parameter initialization and shuffling in `train`. The same
+        seed is used for every L2 weight.
+
+    Returns:
+      Tuple (detector, selection_loss):
+        detector: The detector with the lowest CV loss.
+        selection_loss: The lowest CV loss, -TPR at 1% FPR on the CV data,
+          minimised over all (epoch, L2 weight) pairs. The CV data is used
+          both to select and to score, so this is a model-selection score and
+          an optimistically biased estimate of held-out performance; use
+          separate held-out data for an unbiased estimate.
+
+    Raises:
+      ValueError: If l2_weights is empty, if the logits processor's num_leaves
+        is not 2, or if `train` raises (e.g. on a non-finite loss).
+    """
     _check_num_leaves_is_two(logits_processor)
     if np.size(l2_weights) == 0:
       raise ValueError("l2_weights must not be empty.")
@@ -991,7 +1132,7 @@ class BayesianDetector:
       verbose: bool = False,
       seed: int = 0,
   ) -> tuple["BayesianDetector", float]:
-    """Construct, train and return the best detector based on wm and uwm data.
+    """Constructs, trains and returns the best detector on wm and uwm data.
 
     In practice, we have found that tuning pos_truncation_length,
     neg_truncation_length, n_epochs, learning_rate and l2_weights can help
@@ -999,26 +1140,50 @@ class BayesianDetector:
     parameters for your data.
 
     Args:
-      tokenized_wm_outputs: tokenized outputs of watermarked data.
-      tokenized_uwm_outputs: tokenized outputs of unwatermarked data.
-      logits_processor: logits processor used for watermarking.
+      tokenized_wm_outputs: Watermarked outputs. Sequence of 2-D token ID
+        batches (batch_size, output_len), prompt removed.
+      tokenized_uwm_outputs: Unwatermarked outputs. Sequence of 2-D token ID
+        batches (batch_size, output_len), prompt removed.
+      logits_processor: Logits processor used for watermarking.
       eos_token_id: EOS token ID or sequence of EOS token IDs.
-      torch_device: torch device to use.
-      test_size: test size to use for train-test split.
-      pos_truncation_length: Length to truncate wm outputs. If None, no
-        truncation is applied.
-      neg_truncation_length: Length to truncate uwm outputs. If None, no
-        truncation is done.
-      max_padded_length: Length to pad truncated outputs so that all processed
-        entries have same shape.
-      n_epochs: Number of epochs to train the detector.
-      learning_rate: Learning rate to use for training the detector.
-      l2_weights: L2 weights to use for training the detector.
+      torch_device: Torch device to use.
+      test_size: Fraction of batches held out for cross-validation. The split is
+        random and applied to the sequence of batches.
+      pos_truncation_length: Truncation length used for watermarked outputs and
+        for all cross-validation outputs. Rows with fewer tokens before the
+        first EOS token are dropped. If None, no filtering or truncation is
+        applied.
+      neg_truncation_length: Truncation length used only for unwatermarked
+        training outputs (cross-validation outputs use pos_truncation_length).
+        Rows with fewer tokens before the first EOS token are dropped. If None,
+        no filtering or truncation is applied.
+      max_padded_length: Length to which filtered outputs are padded (with EOS
+        tokens), so that all processed entries have the same shape. If None,
+        max(pos_truncation_length, neg_truncation_length) is used. Rows longer
+        than this (only possible if a truncation length is None) are truncated.
+      n_epochs: Number of epochs to train each detector.
+      learning_rate: Learning rate to use for training each detector.
+      l2_weights: Candidate L2 weights; one detector is trained per weight and
+        the one with the lowest CV loss is returned.
       verbose: Whether to print training progress.
-      seed: Seed for training.
+      seed: Seed for the train/CV split, shuffling, and parameter
+        initialization. Results are reproducible for a fixed seed (up to
+        nondeterminism of the JAX backend).
 
     Returns:
-      Tuple of trained detector and loss achieved on CV data.
+      Tuple (detector, selection_loss):
+        detector: The detector with the lowest CV loss.
+        selection_loss: The lowest CV loss, -TPR at 1% FPR on the CV data,
+          minimised over all (epoch, L2 weight) pairs. The CV data is used
+          both to select and to score, so this is a model-selection score and
+          an optimistically biased estimate of held-out performance; use
+          separate held-out data for an unbiased estimate.
+
+    Raises:
+      ValueError: If the arguments are invalid (including a logits processor
+        with num_leaves other than 2) or a split is empty after filtering (see
+        `process_raw_model_outputs`), or if training fails (see
+        `train_best_detector_given_g_values`).
     """
     _check_num_leaves_is_two(logits_processor)
     (
