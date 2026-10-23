@@ -175,7 +175,32 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
         detection. Defaults to True.
       num_leaves: Number of leaves per node in the tournament tree, >= 2.
         Defaults to 2.
+
+    Raises:
+      ValueError: If key, depth, ngram_len or num_leaves is not an int or is
+        outside its valid range.
     """
+    # bool is a subclass of int; reject it explicitly.
+    if isinstance(key, bool) or not isinstance(key, int):
+      raise ValueError(f"`key` has to be an int, but is {key!r}")
+    if not 0 <= key < 2**63:
+      raise ValueError(f"`key` has to be in [0, 2**63), but is {key}")
+    if isinstance(depth, bool) or not isinstance(depth, int):
+      raise ValueError(f"`depth` has to be an int, but is {depth!r}")
+    if depth < 1:
+      raise ValueError(f"`depth` has to be >= 1, but is {depth}")
+    if isinstance(ngram_len, bool) or not isinstance(ngram_len, int):
+      raise ValueError(f"`ngram_len` has to be an int, but is {ngram_len!r}")
+    # With ngram_len=1 the context is empty, so every step after the first
+    # repeats it and nothing is watermarked.
+    if ngram_len < 2:
+      raise ValueError(f"`ngram_len` has to be >= 2, but is {ngram_len}")
+    if isinstance(num_leaves, bool) or not isinstance(num_leaves, int):
+      raise ValueError(f"`num_leaves` has to be an int, but is {num_leaves!r}")
+    # num_leaves=1 leaves the scores unchanged; num_leaves<=0 is meaningless.
+    if num_leaves < 2:
+      raise ValueError(f"`num_leaves` has to be >= 2, but is {num_leaves}")
+
     self.ngram_len = ngram_len
     self.key = key
     self.depth = depth
@@ -218,8 +243,9 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
       num_candidates). Candidates with zero probability remain at -inf.
 
     Raises:
-      ValueError: If input_ids is not 2-D or if candidate_scores is on an
-        unexpected device.
+      ValueError: If input_ids is not 2-D, if candidate_scores is on an
+        unexpected device, or if the batch sizes of input_ids and
+        candidate_scores differ.
     """
     self._check_input_ids_shape(input_ids)
     if candidate_scores.device != self.device:
@@ -227,6 +253,11 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
           "SynthIDLogitsProcessor received inputs with unexpected device.",
       )
     batch_size = input_ids.shape[0]
+    if candidate_scores.shape[0] != batch_size:
+      raise ValueError(
+          f"input_ids has batch size {batch_size}, but the scores have batch"
+          f" size {candidate_scores.shape[0]}."
+      )
 
     if self.state is None:
       self.state = self._init_state(batch_size)
@@ -311,10 +342,18 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
       remain -inf.
 
     Raises:
-      ValueError: If input_ids is not 2-D or if scores is on an unexpected
-        device.
+      ValueError: If scores contains NaN or +inf, if every score is -inf, if
+        input_ids is not 2-D, if scores is on an unexpected device, or if the
+        batch sizes of input_ids and scores differ.
     """
+    if not (torch.isfinite(scores) | torch.isneginf(scores)).all():
+      raise ValueError(
+          "Scores contain NaN or +inf entries; only finite values and -inf are"
+          " allowed."
+      )
     num_candidates = int(torch.isfinite(scores).sum(dim=1).max())
+    if num_candidates == 0:
+      raise ValueError("All scores are -inf; nothing to sample from.")
     candidates = torch.topk(scores, k=num_candidates, dim=1)
     watermarked = self._watermark_candidates(
         input_ids, candidates.values, candidates.indices

@@ -307,7 +307,7 @@ class LogitsProcessorCorrectnessTest(parameterized.TestCase):
     self.assertTrue(passes)
 
 
-class LogitsProcessorTest(absltest.TestCase):
+class LogitsProcessorTest(parameterized.TestCase):
 
   def set_up_logits_processor(
       self,
@@ -455,6 +455,48 @@ class LogitsProcessorTest(absltest.TestCase):
           **legacy_kwargs,  # pyrefly: ignore[unexpected-keyword]
       )
 
+  @parameterized.parameters(
+      (dict(key=-1), r'`key` has to be in \[0, 2\*\*63\)'),
+      (dict(key=2**63), r'`key` has to be in \[0, 2\*\*63\)'),
+      (dict(key=1.0), '`key` has to be an int'),
+      (dict(key=True), '`key` has to be an int'),
+      (dict(depth=0), '`depth` has to be >= 1'),
+      (dict(depth=-3), '`depth` has to be >= 1'),
+      (dict(depth=2.0), '`depth` has to be an int'),
+  )
+  def test_key_and_depth_validation(self, kwargs, regex):
+    with self.assertRaisesRegex(ValueError, regex):
+      # Wrong types are passed deliberately to exercise validation.
+      logits_processing.SynthIDLogitsProcessor(
+          ngram_len=5,
+          device=torch_testing.torch_device(),
+          **kwargs,  # pyrefly: ignore[bad-argument-type]
+      )
+
+  @parameterized.parameters(0, 2**63 - 1)
+  def test_key_and_depth_boundaries_accepted(self, key):
+    lp = logits_processing.SynthIDLogitsProcessor(
+        ngram_len=5, key=key, depth=1, device=torch_testing.torch_device()
+    )
+    self.assertEqual(lp.key, key)
+    self.assertEqual(lp.depth, 1)
+
+  @parameterized.parameters(
+      (dict(ngram_len=1), '`ngram_len` has to be >= 2'),
+      (dict(ngram_len=0), '`ngram_len` has to be >= 2'),
+      (dict(ngram_len=5.0), '`ngram_len` has to be an int'),
+      (dict(ngram_len=5, num_leaves=1), '`num_leaves` has to be >= 2'),
+      (dict(ngram_len=5, num_leaves=0), '`num_leaves` has to be >= 2'),
+      (dict(ngram_len=5, num_leaves=2.0), '`num_leaves` has to be an int'),
+  )
+  def test_ngram_len_and_num_leaves_validation(self, kwargs, regex):
+    with self.assertRaisesRegex(ValueError, regex):
+      # Wrong types are passed deliberately to exercise validation.
+      logits_processing.SynthIDLogitsProcessor(
+          device=torch_testing.torch_device(),
+          **kwargs,  # pyrefly: ignore[bad-argument-type]
+      )
+
   def test_repetition_mask_respects_history_size(self):
     device = torch_testing.torch_device()
     lp = logits_processing.SynthIDLogitsProcessor(
@@ -564,6 +606,17 @@ class LogitsProcessorCallTest(parameterized.TestCase):
         atol=1e-5,
         rtol=1e-5,
     )
+
+  @parameterized.parameters(float('nan'), float('inf'))
+  def test_call_rejects_nan_and_pos_inf(self, bad_value):
+    device = torch_testing.torch_device()
+    lp = logits_processing.SynthIDLogitsProcessor(
+        ngram_len=3, key=5, depth=2, device=device
+    )
+    scores = torch.zeros((2, 6), device=device)
+    scores[1, 3] = bad_value
+    with self.assertRaisesRegex(ValueError, r'NaN or \+inf'):
+      lp(torch.zeros((2, 1), dtype=torch.int64, device=device), scores)
 
   def test_skip_first_ngram_calls(self):
     """The first ngram_len - 1 calls are unchanged and not in the history."""

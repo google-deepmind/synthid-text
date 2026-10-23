@@ -16,6 +16,7 @@
 import warnings
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import mock
 import torch
 import transformers
@@ -24,15 +25,17 @@ from synthid_text import logits_processing
 from synthid_text import synthid_mixin
 
 
+_TINY_CONFIG = transformers.GPT2Config(
+    vocab_size=50, n_positions=64, n_embd=16, n_layer=1, n_head=2
+)
+
+
 def _tiny_model() -> synthid_mixin.SynthIDGPT2LMHeadModel:
   torch.manual_seed(0)
-  config = transformers.GPT2Config(
-      vocab_size=50, n_positions=64, n_embd=16, n_layer=1, n_head=2
-  )
-  return synthid_mixin.SynthIDGPT2LMHeadModel(config).eval()
+  return synthid_mixin.SynthIDGPT2LMHeadModel(_TINY_CONFIG).eval()
 
 
-class SynthidMixinTest(absltest.TestCase):
+class SynthidMixinTest(parameterized.TestCase):
 
   def _generate_and_record(self, model, **generate_kwargs):
     """Runs generate() recording raw logits and watermark inputs/outputs."""
@@ -122,6 +125,67 @@ class SynthidMixinTest(absltest.TestCase):
       if not torch.allclose(inp_logp, out_logp, atol=1e-5):
         any_changed = True
     self.assertTrue(any_changed, "Watermarking never modified the scores.")
+
+  def test_generate_requires_top_k(self):
+    model = _tiny_model()
+    with self.assertRaisesRegex(ValueError, "top_k"):
+      model.generate(
+          input_ids=torch.ones(1, 6, dtype=torch.long),
+          do_sample=True,
+          top_k=0,
+          max_new_tokens=2,
+          pad_token_id=0,
+      )
+
+  def test_generate_requires_sampling(self):
+    model = _tiny_model()
+    with self.assertRaisesRegex(ValueError, "do_sample"):
+      model.generate(
+          input_ids=torch.ones(1, 6, dtype=torch.long),
+          do_sample=False,
+          max_new_tokens=2,
+          pad_token_id=0,
+      )
+
+  # DoLa and contrastive search are Hub repos in Transformers v5, which
+  # raises unless trust_remote_code=True; the mixin must then reject them
+  # before anything is loaded. The mode name's case depends on Python.
+  @parameterized.parameters(
+      (
+          dict(assistant_model=transformers.GPT2LMHeadModel(_TINY_CONFIG)),
+          "assisted generation",
+      ),
+      (dict(prompt_lookup_num_tokens=3), "assisted generation"),
+      (dict(use_mtp=True), "assisted generation"),
+      (dict(num_beams=2), "num_beams=1"),
+      (
+          dict(dola_layers="low", trust_remote_code=True),
+          "(?i)plain sampling.*dola_generation",
+      ),
+      (
+          dict(do_sample=False, penalty_alpha=0.6, trust_remote_code=True),
+          "(?i)plain sampling.*contrastive_search",
+      ),
+      (dict(custom_generate=lambda **kw: None), "custom_generate"),
+      (dict(cache_implementation="paged"), "continuous batching"),
+      (
+          dict(watermarking_config=transformers.WatermarkingConfig()),
+          "watermarking_config",
+      ),
+  )
+  def test_unsupported_generation_paths_raise(self, kwargs, regex):
+    model = _tiny_model()
+    generate_kwargs = dict(
+        input_ids=torch.ones(1, 6, dtype=torch.long),
+        attention_mask=torch.ones(1, 6, dtype=torch.long),
+        do_sample=True,
+        top_k=5,
+        max_new_tokens=4,
+        pad_token_id=0,
+    )
+    generate_kwargs.update(kwargs)
+    with self.assertRaisesRegex(ValueError, regex):
+      model.generate(**generate_kwargs)
 
   def test_generation_and_detection_agree(self):
     """Detection recomputes the generation-time contexts and repetition mask."""
@@ -253,6 +317,11 @@ class SynthidMixinTest(absltest.TestCase):
       ) as processor_cls:
         model._get_logits_processor(config, **kwargs)
       self.assertEqual(processor_cls.call_args.kwargs["device"], want)
+
+  def test_continuous_batching_raises(self):
+    model = _tiny_model()
+    with self.assertRaisesRegex(ValueError, "continuous batching"):
+      model.init_continuous_batching()
 
   def test_watermark_precedes_logit_normalization(self):
     """With renormalize_logits=True the watermark runs before normalization."""

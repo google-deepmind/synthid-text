@@ -66,9 +66,84 @@ class SynthIDSparseTopKMixin(transformers.GenerationMixin):
   distribution rather than the model's. A warning is issued in that case. Use
   `output_logits=True` for the model's raw logits, e.g. to compute perplexity.
 
-  Only plain sampling (`do_sample=True`, `num_beams=1`) through `generate()`
-  produces correctly watermarked text.
+  Only plain sampling (`do_sample=True`, `num_beams=1`, `top_k >= 2`) through
+  `generate()` is supported. Assisted and prompt-lookup decoding,
+  `custom_generate` and continuous batching raise an error, because they would
+  produce text that is not watermarked. Setting the Transformers
+  `watermarking_config` also raises an error, because it would add a second
+  watermark on top of SynthID.
   """
+
+  def generate(self, *args, **kwargs):
+    """Generates watermarked text.
+
+    The arguments and return value are those of
+    `transformers.GenerationMixin.generate`.
+
+    Args:
+      *args: Positional arguments passed to
+        `transformers.GenerationMixin.generate`.
+      **kwargs: Keyword arguments passed to
+        `transformers.GenerationMixin.generate`.
+
+    Returns:
+      The same output as `transformers.GenerationMixin.generate`.
+
+    Raises:
+      ValueError: If `custom_generate` is given, or if the generation mode or
+        generation config is not supported (plain sampling with `top_k >= 2`
+        is required).
+    """
+    # `custom_generate` does not go through `_get_logits_processor`, so it
+    # would return unwatermarked text.
+    if kwargs.get("custom_generate") is not None:
+      raise ValueError(
+          "Watermarked generation does not support `custom_generate`."
+      )
+    return super().generate(*args, **kwargs)  # pyrefly: ignore[bad-argument-type]
+
+  def init_continuous_batching(self, *args, **kwargs):
+    """Raises, because continuous batching is not supported.
+
+    Continuous batching (also used by `generate_batch` and by `generate()` with
+    `cache_implementation="paged"`) builds one set of logits processors for
+    all sequences, which would share one stateful watermarking processor.
+
+    Args:
+      *args: Ignored.
+      **kwargs: Ignored.
+
+    Raises:
+      ValueError: Always.
+    """
+    del args, kwargs  # Unused.
+    raise ValueError(
+        "Watermarked generation does not support continuous batching."
+    )
+
+  def _validate_generation_mode(  # pyrefly: ignore[bad-override]
+      self, generation_mode, generation_config, generation_mode_kwargs
+  ):
+    """Allows only plain multinomial sampling."""
+    modes = transformers.generation.GenerationMode
+    if generation_mode == modes.ASSISTED_GENERATION:
+      # Assisted and prompt-lookup decoding call the logits processor once per
+      # candidate position (including rejected ones) and pass it to the
+      # assistant's generate(), so the watermarking state no longer matches
+      # the generated text.
+      raise ValueError(
+          "Watermarked generation does not support assisted generation"
+          " (assistant_model, prompt_lookup_num_tokens, assistant_early_exit,"
+          " use_mtp)."
+      )
+    if generation_mode != modes.SAMPLE:
+      raise ValueError(
+          "Watermarked generation requires plain sampling (do_sample=True,"
+          f" num_beams=1), but the generation mode is {generation_mode}."
+      )
+    return super()._validate_generation_mode(  # pyrefly: ignore[bad-argument-type]
+        generation_mode, generation_config, generation_mode_kwargs
+    )
 
   def _get_logits_processor(  # pyrefly: ignore[bad-override]
       self,
@@ -88,7 +163,23 @@ class SynthIDSparseTopKMixin(transformers.GenerationMixin):
     Returns:
       The default processors with the watermarking processor added last, or
       just before a trailing LogitNormalization.
+
+    Raises:
+      ValueError: If `top_k` is unset or less than 2, or `watermarking_config`
+        is set.
     """
+    if generation_config.top_k is None or generation_config.top_k < 2:
+      raise ValueError(
+          f"Invalid top_k {generation_config.top_k} when sampling with"
+          " watermarking. Set top_k >= 2 to bound the number of candidate"
+          " tokens that are watermarked at each step."
+      )
+    if generation_config.watermarking_config is not None:
+      raise ValueError(
+          "Watermarked generation does not support `watermarking_config`:"
+          " Transformers would add its own watermark on top of SynthID."
+      )
+
     # 1. Build the base logits processors and warpers (temperature, top-k,
     # etc.).
     parent = super()._get_logits_processor
