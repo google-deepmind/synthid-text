@@ -715,7 +715,7 @@ class BayesianDetector:
       params: Mapping[str, Mapping[str, Any]],
   ):
     self.detector_module = BayesianDetectorModule(
-        watermarking_depth=len(logits_processor.keys),
+        watermarking_depth=logits_processor.depth,
         params=params,
     )
     self.logits_processor = logits_processor
@@ -960,7 +960,7 @@ class BayesianDetector:
     val_losses = []
     for l2_weight in l2_weights:
       detector_module = BayesianDetectorModule(
-          watermarking_depth=len(logits_processor.keys),
+          watermarking_depth=logits_processor.depth,
       )
       _, min_val_loss = train(
           detector_module=detector_module,
@@ -1028,11 +1028,6 @@ class BayesianDetector:
     Returns:
       Tuple of trained detector and loss achieved on CV data.
     """
-    if torch_device.type in ("cuda", "tpu"):
-      raise ValueError(
-          "We have found the training unstable on CPUs; we are working on"
-          " a fix. Use GPU or TPU for training."
-      )
     (  # pyrefly: ignore[bad-unpacking]
         train_g_values,
         train_masks,

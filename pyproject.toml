@@ -11,18 +11,21 @@ authors = [
 description = "SynthID Text: Identifying AI-generated text content"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
-  "flax",
-  "immutabledict==4.2.0",
-  "jax[cuda]",
+  # flax<0.12.8 calls jax.core.get_opaque_trace_state, removed in jax 0.11.
+  "flax>=0.12.8",
+  "immutabledict>=4.2",
+  # CPU build by default; only the Bayesian detector uses JAX. Install the
+  # `cuda` extra to train it on GPU.
+  "jax",
   "jaxtyping",
-  "numpy==1.26.0",
+  "numpy>=2.0",
   "optax",
   "scikit-learn",
-  "torch==2.4.0",
+  "torch>=2.5",
   "tqdm",
-  "transformers==4.43.3",
+  "transformers>=5.16,<6",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -32,8 +35,9 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Typing :: Typed",
 ]
@@ -52,12 +56,17 @@ keywords = [
 "Demo" = "https://colab.research.google.com/github/google-deepmind/synthid-text/blob/main/notebooks/synthid_text_huggingface_integration.ipynb"
 
 [project.optional-dependencies]
+cuda = [
+  "jax[cuda]",
+]
+
 notebook = [
+  # Needed for device_map="auto".
+  "accelerate",
   "datasets",
   "huggingface_hub",
   "ipywidgets",
   "pandas",
-  "tensorflow",
 ]
 
 notebook-local = [

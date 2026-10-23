@@ -20,19 +20,22 @@ def expected_mean_g_value(
     vocab_size: int,
     num_leaves: int = 2,
 ) -> float:
-  """Compute expected mean g-value after watermarking, assuming uniform LM dist.
+  """Computes the expected mean g-value of watermarked text for a uniform LM.
 
-  This is the theoretical expected value for a single-layer of tournament
+  This is the theoretical expected value for a single layer of tournament
   watermarking, using a Bernoulli(0.5) g-value distribution and N=num_leaves
   samples, assuming that the LM distribution p_LM is uniform.
 
   Args:
     vocab_size: The size of the vocabulary.
     num_leaves: Number of leaves per node in the tournament tree (N in the
-      paper).
+      paper). Defaults to 2.
 
   Returns:
     The expected mean g-value for watermarked text.
+
+  Raises:
+    ValueError: If num_leaves is not 2 or 3.
   """
   if num_leaves == 2:
     # This equation is from Corollary 27 in Supplementary Information of paper,
@@ -47,5 +50,3 @@ def expected_mean_g_value(
         f'Only 2 or 3 leaves are supported for the expected mean g-value'
         f' computation, but got {num_leaves}.'
     )
-
-
