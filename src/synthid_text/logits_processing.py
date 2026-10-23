@@ -16,6 +16,7 @@
 """SynthID text logits processing and watermarked score updates."""
 
 from collections.abc import Sequence
+import copy
 
 import torch
 import transformers
@@ -103,7 +104,7 @@ class SynthIDState:
     context: Last ngram_len - 1 tokens (batch_size, ngram_len - 1).
     context_history: Packed int64 keys of the previously seen contexts, most
       recent first (batch_size, context_history_size).
-    num_calls: Number of calls to `_watermark_candidates`.
+    num_calls: Number of tokens the state has been advanced by.
   """
 
   def __init__(
@@ -132,6 +133,13 @@ class SynthIDState:
         device=device,
     )
     self.num_calls = 0
+
+  def clone(self) -> "SynthIDState":
+    """Returns an independent copy of the state."""
+    cloned = copy.copy(self)
+    cloned.context = self.context.clone()
+    cloned.context_history = self.context_history.clone()
+    return cloned
 
 
 class SynthIDLogitsProcessor(transformers.LogitsProcessor):
@@ -223,7 +231,79 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
         device=self.device,
     )
 
-  def _watermark_candidates(
+  def _advance_context(
+      self, input_ids: torch.LongTensor
+  ) -> torch.Tensor | None:
+    """Advances the context by one token.
+
+    Args:
+      input_ids: Input token IDs (batch_size, input_len); the last token is
+        appended to the context (except at the first call, where the context is
+        initialized to zeros).
+
+    Returns:
+      The Threefry key of the new context (batch_size, 2), or None if this call
+      is one of the first ngram_len - 1 calls and skip_first_ngram_calls is
+      True.
+    """
+    batch_size = input_ids.shape[0]
+    if self.state is None:
+      self.state = self._init_state(batch_size)
+    else:
+      self.state.context = torch.concat(
+          (self.state.context, input_ids[:, -1:]),
+          dim=1,
+      )[:, 1:]
+    self.state.num_calls += 1
+
+    if self.skip_first_ngram_calls and self.state.num_calls < self.ngram_len:
+      return None
+    base_key_batch = self.base_key.expand(batch_size, 2)
+    return hashing_function.recursively_fold_in(
+        base_key_batch, self.state.context
+    )
+
+  def _record_context(self, context_key: torch.Tensor) -> torch.BoolTensor:
+    """Adds a context to the history.
+
+    Args:
+      context_key: Threefry key of the context (batch_size, 2).
+
+    Returns:
+      Boolean tensor (batch_size, 1) that is True where the context was already
+      in the history before this call.
+    """
+    assert self.state is not None
+    packed_ctx = hashing_function.pack_key_to_int64(context_key)[:, None]
+    is_repeated_context = (self.state.context_history == packed_ctx).any(
+        dim=1,
+        keepdim=True,
+    )
+    self.state.context_history = torch.concat(
+        (packed_ctx, self.state.context_history),
+        dim=1,
+    )[:, :-1]
+    return is_repeated_context
+
+  def advance(self, input_ids: torch.LongTensor) -> None:
+    """Advances the state by one token without watermarking.
+
+    This updates the context and context history exactly as
+    `watermark_candidates` does, for positions whose token was produced
+    without this processor (e.g. by another key in speculative decoding).
+
+    Args:
+      input_ids: Input token IDs (batch_size, input_len).
+
+    Raises:
+      ValueError: If input_ids is not 2-D.
+    """
+    self._check_input_ids_shape(input_ids)
+    context_key = self._advance_context(input_ids)
+    if context_key is not None:
+      self._record_context(context_key)
+
+  def watermark_candidates(
       self,
       input_ids: torch.LongTensor,
       candidate_scores: torch.FloatTensor,
@@ -259,25 +339,11 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
           f" size {candidate_scores.shape[0]}."
       )
 
-    if self.state is None:
-      self.state = self._init_state(batch_size)
-    else:
-      self.state.context = torch.concat(
-          (self.state.context, input_ids[:, -1:]),
-          dim=1,
-      )
-      self.state.context = self.state.context[:, 1:]
-
-    self.state.num_calls += 1
-
-    if self.skip_first_ngram_calls and self.state.num_calls < self.ngram_len:
+    context_key = self._advance_context(input_ids)
+    if context_key is None:
       return candidate_scores
 
-    # 1. Compute context key and binary g-values using Threefry PRNG
-    base_key_batch = self.base_key.expand(batch_size, 2)
-    context_key = hashing_function.recursively_fold_in(
-        base_key_batch, self.state.context
-    )
+    # 1. Compute binary g-values using Threefry PRNG
     g_values = hashing_function.compute_g_values_boolean(
         context_key, candidate_indices, depth=self.depth
     )
@@ -294,17 +360,8 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
         torch.isneginf(candidate_scores), candidate_scores, updated_scores
     )
 
-    # 3. Check if the current watermarking context was previously used
-    packed_ctx = hashing_function.pack_key_to_int64(context_key)[:, None]
-    is_repeated_context = (self.state.context_history == packed_ctx).any(
-        dim=1,
-        keepdim=True,
-    )
-    self.state.context_history = torch.concat(
-        (packed_ctx, self.state.context_history),
-        dim=1,
-    )[:, :-1]
-
+    # 3. Leave the scores unchanged if the context was previously used
+    is_repeated_context = self._record_context(context_key)
     return torch.where(
         is_repeated_context,
         input=candidate_scores,
@@ -355,7 +412,7 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
     if num_candidates == 0:
       raise ValueError("All scores are -inf; nothing to sample from.")
     candidates = torch.topk(scores, k=num_candidates, dim=1)
-    watermarked = self._watermark_candidates(
+    watermarked = self.watermark_candidates(
         input_ids, candidates.values, candidates.indices
     )
     return torch.full_like(scores, -float("inf")).scatter(

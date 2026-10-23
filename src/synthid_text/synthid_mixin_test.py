@@ -220,7 +220,7 @@ class SynthidMixinTest(parameterized.TestCase):
     # Per call: (context used for hashing, whether it was treated as repeated,
     # context history before the call).
     calls = []
-    original = logits_processing.SynthIDLogitsProcessor._watermark_candidates
+    original = logits_processing.SynthIDLogitsProcessor.watermark_candidates
 
     def recording_watermark_candidates(self_, input_ids, scores, indices):
       history = (
@@ -241,7 +241,7 @@ class SynthidMixinTest(parameterized.TestCase):
 
     with mock.patch.object(
         logits_processing.SynthIDLogitsProcessor,
-        "_watermark_candidates",
+        "watermark_candidates",
         autospec=True,
         side_effect=recording_watermark_candidates,
     ):

@@ -291,6 +291,71 @@ with open('./data/human_eval.jsonl') as f:
     full_data.append(x)
 ```
 
+## Dual-Key Speculative Decoding
+
+The `speculative_engine` module provides a standalone implementation of
+dual-key tournament watermarked speculative sampling. It accelerates generation
+by coupling a target model with a faster draft model that shares its tokenizer,
+watermarking accepted draft tokens with `key_draft` and replacement/bonus
+tokens with `key_target`. Averaged over watermarking keys, each generated token
+follows the target model's top-k distribution, as in autoregressive top-k
+sampling. For an interactive walkthrough that visualizes token origins,
+acceptance rates, and detector $p$-values, see the
+[speculative decoding notebook in Colab][synthid-speculative-colab].
+
+```python
+from synthid_text import detector_frequentist
+from synthid_text import speculative_engine
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+tokenizer = AutoTokenizer.from_pretrained("gpt2-xl")
+target_model = AutoModelForCausalLM.from_pretrained("gpt2-xl").to(device)
+draft_model = AutoModelForCausalLM.from_pretrained("distilgpt2").to(device)
+
+# Watermarking runs on the CPU (watermark_device defaults to CPU), while the
+# models run on `device`.
+config = speculative_engine.DualKeyWatermarkingConfig(
+    ngram_len=5,
+    key_draft=42,
+    key_target=84,
+    depth=15,
+    temperature=0.7,
+    top_k=40,
+    draft_len=4,
+    target_device=device,
+    draft_device=device,
+)
+
+engine = speculative_engine.DualKeySpeculativeEngine(
+    target_model=target_model,
+    draft_model=draft_model,
+    config=config,
+)
+
+# Generate watermarked text with dual-key speculative decoding. The engine
+# generates a single sequence at a time (batch size 1).
+prompt_ids = tokenizer(
+    "Write a short story about a lighthouse.", return_tensors="pt"
+).input_ids
+output = engine.generate(
+    prompt_ids,
+    max_new_tokens=100,
+    eos_token_id=target_model.generation_config.eos_token_id,
+)
+print(tokenizer.decode(output.sequences[0]))
+
+# Statistical detection aggregating draft and target key signals. Only the
+# generated tokens are scored; output.sequences also contains the prompt.
+generated_ids = output.sequences[:, prompt_ids.shape[1]:]
+detector = detector_frequentist.DualKeyFrequentistDetector.from_config(
+    config, eos_token_id=target_model.generation_config.eos_token_id
+)
+p_value = detector.p_value(generated_ids)[0]
+print(f"p-value: {p_value:.4e}")
+```
+
 ## Citing this work
 
 ```bibtex
@@ -338,6 +403,7 @@ This is not an official Google product.
 [pytorch]: https://pytorch.org/
 [nature-paper]: https://doi.org/10.1038/s41586-024-08025-4
 [synthid-colab]: https://colab.research.google.com/github/google-deepmind/synthid-text/blob/main/notebooks/synthid_text_huggingface_integration.ipynb
+[synthid-speculative-colab]: https://colab.research.google.com/github/google-deepmind/synthid-text/blob/main/notebooks/synthid_text_speculative_decoding.ipynb
 [synthid-pypi]: https://pypi.org/project/synthid-text/
 [synthid-detector-bayesian]: ./src/synthid_text/detector_bayesian.py
 [synthid-detector-frequentist]: ./src/synthid_text/detector_frequentist.py
