@@ -23,6 +23,7 @@ dependencies = [
   "numpy>=2.0",
   "optax",
   "scikit-learn",
+  "scipy",
   "torch>=2.5",
   "tqdm",
   "transformers>=5.16,<6",
