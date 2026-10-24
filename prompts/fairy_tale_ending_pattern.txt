@@ -1,0 +1,11 @@
+Story: Cinderella
+Ending: They got married and lived happily ever after.
+
+Story: Sleeping Beauty
+Ending: They got married and lived happily ever after.
+
+Story: Snow White
+Ending: They got married and lived happily ever after.
+
+Story: Cinderella
+Ending:

@@ -1,0 +1,55 @@
+============================= test session starts ==============================
+platform linux -- Python 3.10.21, pytest-9.1.1, pluggy-1.6.0 -- /home/joao/miniconda3/envs/synthid-text/bin/python
+rootdir: /home/joao/contentProtection/synthid-text
+configfile: pyproject.toml
+plugins: anyio-4.15.1, jaxtyping-0.3.7
+collecting ... collected 35 items
+
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_10_num_layers_1 PASSED [  2%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_10_num_layers_1_num_leaves_3 PASSED [  5%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_10_num_layers_2 PASSED [  8%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_5_num_layers_1 PASSED [ 11%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_2_ngram_len_10_num_layers_1_num_leaves_3 PASSED [ 14%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_distributional_convergence PASSED [ 17%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_g_value_uniformity_for_random_ngrams_vocab_size_10k_ngram_len_5_num_layers_3 PASSED [ 20%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_g_value_uniformity_for_random_ngrams_vocab_size_1k_ngram_len_10_num_layers_5 PASSED [ 22%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_g_values_uniformity_across_vocab_size_vocab_size_10k PASSED [ 25%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_g_values_uniformity_across_vocab_size_vocab_size_1k PASSED [ 28%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorTest::test_compute_context_repetition_mask_shape PASSED [ 31%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorTest::test_compute_eos_token_mask_shape PASSED [ 34%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorTest::test_compute_g_values_shape PASSED [ 37%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorTest::test_compute_ngram_keys_shape PASSED [ 40%]
+src/synthid_text/logits_processing_test.py::LogitsProcessorTest::test_watermarked_call_shape PASSED [ 42%]
+src/synthid_text/synthid_mixin_test.py::SynthidMixinTest::test_sampling_from_mixin_includes_watermarking PASSED [ 45%]
+tests/key_file_test.py::test_default_keys_are_copied_and_detection_uses_cpu PASSED [ 48%]
+tests/key_file_test.py::test_key_file_accepts_utf8_bom_and_int64_boundaries PASSED [ 51%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[empty] PASSED [ 54%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[true-is-not-an-integer-key] PASSED [ 57%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[false-is-not-an-integer-key] PASSED [ 60%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[duplicates] PASSED [ 62%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[int64-overflow] PASSED [ 65%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[int64-underflow] PASSED [ 68%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[object-not-array] PASSED [ 71%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[string-not-array] PASSED [ 74%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[null-not-array] PASSED [ 77%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[float-not-integer] PASSED [ 80%]
+tests/key_file_test.py::test_invalid_key_files_are_rejected[invalid-json] PASSED [ 82%]
+tests/key_file_test.py::test_different_keys_change_scores_without_classifying_authorship PASSED [ 85%]
+tests/key_file_test.py::test_configured_model_builds_warper_with_custom_keys PASSED [ 88%]
+tests/prompt_demo_test.py::test_short_text_returns_no_score PASSED       [ 91%]
+tests/prompt_demo_test.py::test_eos_and_its_suffix_do_not_change_scores PASSED [ 94%]
+tests/prompt_demo_test.py::test_scores_are_finite_and_deterministic PASSED [ 97%]
+tests/prompt_demo_test.py::test_repeated_context_is_excluded_from_official_scores PASSED [100%]
+
+=============================== warnings summary ===============================
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_10_num_layers_1
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_10_num_layers_1_num_leaves_3
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_10_num_layers_2
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_100_ngram_len_5_num_layers_1
+src/synthid_text/logits_processing_test.py::LogitsProcessorCorrectnessTest::test_bias_from_logits_processor_vocab_size_2_ngram_len_10_num_layers_1_num_leaves_3
+src/synthid_text/synthid_mixin_test.py::SynthidMixinTest::test_sampling_from_mixin_includes_watermarking
+  /home/joao/miniconda3/envs/synthid-text/lib/python3.10/site-packages/torch/_functorch/vmap.py:433: UserWarning: There is a performance drop because we have not yet implemented the batching rule for aten::take. Please file us an issue on GitHub so that we can prioritize its implementation. (Triggered internally at /pytorch/aten/src/ATen/functorch/BatchedFallback.cpp:80.)
+    batched_outputs = func(*batched_inputs, **kwargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 35 passed, 6 warnings in 91.09s (0:01:31) ===================

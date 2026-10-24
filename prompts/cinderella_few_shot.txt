@@ -1,0 +1,11 @@
+Story: Cinderella
+Ending: Cinderella marries the prince, and they live happily ever after.
+
+Story: Sleeping Beauty
+Ending: The prince wakes the princess, and they live happily ever after.
+
+Story: Snow White
+Ending: Snow White marries the prince, and they live happily ever after.
+
+Story: Cinderella
+Ending:

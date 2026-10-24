@@ -1,0 +1,32 @@
+{
+  "captured_at_utc": "2026-10-20T20:02:06.437259+00:00",
+  "python": "3.10.21 (main, Aug 27 2026, 14:42:07) [GCC 14.3.0]",
+  "executable": "/home/joao/miniconda3/envs/synthid-text/bin/python",
+  "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "packages": {
+    "torch": "2.10.0+cu128",
+    "transformers": "4.43.3",
+    "numpy": "1.26.0",
+    "jax": "0.4.35",
+    "jaxlib": "0.4.35",
+    "flax": "0.10.2",
+    "optax": "0.2.4",
+    "tensorflow": "2.17.1",
+    "pytest": "9.1.1",
+    "accelerate": "1.15.0",
+    "synthid-text": "0.2.1"
+  },
+  "git_head": "21e05962f9018ead797d94eb54e6d2b7ed622724",
+  "upstream_base": "addb4a158143c7c6851a1308f78b89fceed59683",
+  "gpt2_cache_revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+  "torch_cuda_build": "12.8",
+  "cuda_available": true,
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 5060 Laptop GPU",
+    "total_mib": 8150.5625
+  },
+  "synthid_source": "/home/joao/contentProtection/synthid-text/src/synthid_text/logits_processing.py",
+  "cuda_computation_sum_squares": 30,
+  "documentation_review_date": "2026-10-24",
+  "note": "Historical environment observation, re-read for the presentation documentation. Packages and GPU computation were not revalidated during this documentation-only update."
+}

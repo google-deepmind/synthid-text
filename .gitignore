@@ -39,3 +39,4 @@ resultados-locais/
 *.pt
 *.pth
 *.log
+local-results/

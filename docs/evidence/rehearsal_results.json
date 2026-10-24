@@ -1,0 +1,173 @@
+{
+  "rehearsal_local_date": "2026-10-21",
+  "documentation_review_date": "2026-10-24",
+  "source_directory": "local-results/meeting-rehearsal-2026-10-21",
+  "note": "Recorded exploratory examples, not a calibrated detector evaluation. No generation or detection was rerun during this documentation update.",
+  "pairs": [
+    {
+      "pair": 1,
+      "seed": 42,
+      "requested_new_tokens": 256,
+      "mapping": {
+        "X": {
+          "watermarked": false,
+          "weighted_mean_score": 0.5214287042617798,
+          "valid_ngrams": 172,
+          "text_file": "audience/pair_01_X.txt",
+          "tokens": 256
+        },
+        "Y": {
+          "watermarked": true,
+          "weighted_mean_score": 0.5845504999160767,
+          "valid_ngrams": 234,
+          "text_file": "audience/pair_01_Y.txt",
+          "tokens": 256
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "seed": 7,
+      "requested_new_tokens": 128,
+      "mapping": {
+        "Y": {
+          "watermarked": false,
+          "weighted_mean_score": 0.5118033289909363,
+          "valid_ngrams": 89,
+          "text_file": "audience/pair_02_Y.txt",
+          "tokens": 128
+        },
+        "X": {
+          "watermarked": true,
+          "weighted_mean_score": 0.6016773581504822,
+          "valid_ngrams": 122,
+          "text_file": "audience/pair_02_X.txt",
+          "tokens": 128
+        }
+      }
+    },
+    {
+      "pair": 3,
+      "seed": 13,
+      "requested_new_tokens": 128,
+      "mapping": {
+        "X": {
+          "watermarked": false,
+          "weighted_mean_score": 0.5312270522117615,
+          "valid_ngrams": 25,
+          "text_file": "audience/pair_03_X.txt",
+          "tokens": 30
+        },
+        "Y": {
+          "watermarked": true,
+          "weighted_mean_score": 0.5988172292709351,
+          "valid_ngrams": 121,
+          "text_file": "audience/pair_03_Y.txt",
+          "tokens": 128
+        }
+      }
+    }
+  ],
+  "transformations": {
+    "font_only_copy": {
+      "method": "Identical UTF-8 text bytes; presentation font changes only.",
+      "same_sha256": true
+    },
+    "single_word_edit": {
+      "old_word": "library",
+      "new_word": "community",
+      "word_replacements": 1
+    },
+    "one_unicode_character": {
+      "index_zero_based": 5,
+      "old_character": "a",
+      "old_codepoint": "U+0061",
+      "new_character": "а",
+      "new_codepoint": "U+0430",
+      "note": "This changes the text; it is not a font change."
+    },
+    "paraphrase": {
+      "method": "Rewritten by the assistant in this chat from the original marked continuation.",
+      "note": "No separate local paraphrasing model was run. One rewrite was scored; preservation of meaning has not been assessed by people."
+    }
+  },
+  "detection_results": [
+    {
+      "case": "06_detect_X",
+      "text_file": "audience/pair_01_X.txt",
+      "key_file": "keys/demo_key.txt",
+      "token_count": 256,
+      "valid_ngram_count": 172,
+      "mean_score": 0.5187984704971313,
+      "weighted_mean_score": 0.5214287042617798,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    },
+    {
+      "case": "07_detect_Y",
+      "text_file": "audience/pair_01_Y.txt",
+      "key_file": "keys/demo_key.txt",
+      "token_count": 256,
+      "valid_ngram_count": 234,
+      "mean_score": 0.5723646879196167,
+      "weighted_mean_score": 0.5845504999160767,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    },
+    {
+      "case": "08_detect_same_text_other_key",
+      "text_file": "audience/pair_01_Y.txt",
+      "key_file": "keys/different_demo_key.txt",
+      "token_count": 256,
+      "valid_ngram_count": 234,
+      "mean_score": 0.49672365188598633,
+      "weighted_mean_score": 0.49791765213012695,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    },
+    {
+      "case": "09_detect_font_copy",
+      "text_file": "presenter/variants/font_only_copy.txt",
+      "key_file": "keys/demo_key.txt",
+      "token_count": 256,
+      "valid_ngram_count": 234,
+      "mean_score": 0.5723646879196167,
+      "weighted_mean_score": 0.5845504999160767,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    },
+    {
+      "case": "10_detect_word_edit",
+      "text_file": "presenter/variants/single_word_edit.txt",
+      "key_file": "keys/demo_key.txt",
+      "token_count": 256,
+      "valid_ngram_count": 234,
+      "mean_score": 0.5725071430206299,
+      "weighted_mean_score": 0.5834510922431946,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    },
+    {
+      "case": "11_detect_unicode",
+      "text_file": "presenter/variants/one_unicode_character.txt",
+      "key_file": "keys/demo_key.txt",
+      "token_count": 258,
+      "valid_ngram_count": 236,
+      "mean_score": 0.5703389644622803,
+      "weighted_mean_score": 0.5826366543769836,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    },
+    {
+      "case": "12_detect_paraphrase",
+      "text_file": "presenter/variants/paraphrase.txt",
+      "key_file": "keys/demo_key.txt",
+      "token_count": 189,
+      "valid_ngram_count": 183,
+      "mean_score": 0.49508196115493774,
+      "weighted_mean_score": 0.4918961226940155,
+      "decision": "not_calibrated",
+      "note": "A score is not a probability. No classification threshold has been calibrated."
+    }
+  ]
+}
