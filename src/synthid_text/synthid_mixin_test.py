@@ -285,7 +285,7 @@ class SynthidMixinTest(parameterized.TestCase):
 
   def test_generate_ignores_config_device(self):
     """generate() does not use the device in DEFAULT_WATERMARKING_CONFIG."""
-    model = _tiny_model().to("cpu")
+    model = _tiny_model().to("cpu")  # pyrefly: ignore[bad-argument-type]
     # Simulate DEFAULT_WATERMARKING_CONFIG having a different device
     # (e.g. cuda:0).
     fake_config = dict(synthid_mixin.DEFAULT_WATERMARKING_CONFIG)
