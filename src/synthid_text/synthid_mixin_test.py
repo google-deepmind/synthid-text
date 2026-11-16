@@ -13,11 +13,11 @@
 # limitations under the License.
 # ==============================================================================
 
+from unittest import mock
 import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import mock
 import torch
 import transformers
 
