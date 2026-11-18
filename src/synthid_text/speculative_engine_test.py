@@ -428,8 +428,13 @@ class SpeculativeEngineTest(absltest.TestCase):
 
   def test_numerical_tie_with_zero_residual_accepts_draft_token(self):
     config = _make_config(ngram_len=4, top_k=20, draft_len=3)
+    target_f64 = (
+        transformers.GPT2LMHeadModel(self.target_model.config)
+        .eval()
+        .to(device=self.device, dtype=torch.float64)
+    )
     engine = speculative_engine.DualKeySpeculativeEngine(
-        self.target_model, self.target_model, config
+        target_f64, target_f64, config
     )
     prompt_ids = torch.tensor([[10, 11, 12, 13, 14]], device=self.device)
     # Force u_draws > 1.0 so `u_draws[j] <= min(1.0, p_x / q_x)` is False while
