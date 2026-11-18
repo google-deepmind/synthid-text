@@ -1,5 +1,9 @@
 # SynthID Text
 
+<p align="center">
+  <b>English</b> · <a href="https://github.com/google-deepmind/synthid-text/blob/main/README.zh.md">简体中文</a>
+</p>
+
 This repository provides a reference implementation of the SynthID Text
 watermarking and detection capabilities for the [research paper][nature-paper]
 published in _Nature_. It is not intended for production use. The core library
