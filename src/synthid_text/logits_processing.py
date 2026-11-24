@@ -625,3 +625,47 @@ class SynthIDLogitsProcessor(transformers.LogitsProcessor):
     mask = context_repetition_mask * eos_token_mask
     g_values = self.compute_g_values(input_ids=input_ids)
     return g_values, mask
+
+
+def validate_dual_key_processors(
+    draft_processor: SynthIDLogitsProcessor,
+    target_processor: SynthIDLogitsProcessor,
+) -> None:
+  """Validates that two processors form a compatible dual-key pair.
+
+  Unequal tournament depths are allowed, as dual-key detection pools or
+  mixes g-values across both depths.
+
+  Args:
+    draft_processor: SynthIDLogitsProcessor configured with `key_draft`.
+    target_processor: SynthIDLogitsProcessor configured with `key_target`.
+
+  Raises:
+    ValueError: If the processors share the same key or have different
+      `ngram_len`, `context_history_size`, or `device`.
+  """
+  if draft_processor.key == target_processor.key:
+    raise ValueError(
+        "draft_processor and target_processor must have distinct keys, but"
+        f" both have key={draft_processor.key}."
+    )
+  if draft_processor.ngram_len != target_processor.ngram_len:
+    raise ValueError(
+        "draft_processor and target_processor must have the same ngram_len,"
+        f" got {draft_processor.ngram_len} and {target_processor.ngram_len}."
+    )
+  if (
+      draft_processor.context_history_size
+      != target_processor.context_history_size
+  ):
+    raise ValueError(
+        "draft_processor and target_processor must have the same"
+        " context_history_size, got"
+        f" {draft_processor.context_history_size} and"
+        f" {target_processor.context_history_size}."
+    )
+  if draft_processor.device != target_processor.device:
+    raise ValueError(
+        "draft_processor and target_processor must be on the same device,"
+        f" got {draft_processor.device} and {target_processor.device}."
+    )

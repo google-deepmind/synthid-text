@@ -156,16 +156,11 @@ class DualKeyFrequentistDetectorTest(absltest.TestCase):
     p_same_key = logits_processing.SynthIDLogitsProcessor(
         ngram_len=5, key=42, depth=10, device=device
     )
-    p_diff_depth = logits_processing.SynthIDLogitsProcessor(
-        ngram_len=5, key=84, depth=20, device=device
-    )
     p_diff_ngram = logits_processing.SynthIDLogitsProcessor(
         ngram_len=4, key=84, depth=10, device=device
     )
     with self.assertRaisesRegex(ValueError, 'distinct keys'):
       detector_frequentist.DualKeyFrequentistDetector(p1, p_same_key, _EOS)
-    with self.assertRaisesRegex(ValueError, 'same depth'):
-      detector_frequentist.DualKeyFrequentistDetector(p1, p_diff_depth, _EOS)
     with self.assertRaisesRegex(ValueError, 'same ngram_len'):
       detector_frequentist.DualKeyFrequentistDetector(p1, p_diff_ngram, _EOS)
     p_diff_history = logits_processing.SynthIDLogitsProcessor(
@@ -241,6 +236,42 @@ class DualKeyFrequentistDetectorTest(absltest.TestCase):
     np.testing.assert_array_equal(detector.p_value(all_eos), [1.0, 1.0])
     too_short = torch.tensor([[5, 6, 7], [8, 9, 10]], device=device)
     np.testing.assert_array_equal(detector.p_value(too_short), [1.0, 1.0])
+
+  def test_unequal_depths_match_binomial_tail_and_preserve_null_fpr(self):
+    device = torch_testing.torch_device()
+    depth_draft, depth_target = 8, 20
+    draft_processor = logits_processing.SynthIDLogitsProcessor(
+        ngram_len=5, key=42, depth=depth_draft, device=device
+    )
+    target_processor = logits_processing.SynthIDLogitsProcessor(
+        ngram_len=5, key=84, depth=depth_target, device=device
+    )
+    detector = detector_frequentist.DualKeyFrequentistDetector(
+        draft_processor, target_processor, _EOS
+    )
+    tokens = torch.tensor(
+        [[10, 11, 12, 13, 14, 10, 11, 12, 13, 15, _EOS, 20, 21]],
+        device=device,
+    )
+    draft_g, mask = draft_processor.compute_g_values_and_mask(tokens, _EOS)
+    target_g, _ = target_processor.compute_g_values_and_mask(tokens, _EOS)
+    self.assertEqual(mask.cpu().tolist(), [[True] * 5 + [False] * 4])
+    num_ones = int(draft_g[0, :5].sum() + target_g[0, :5].sum())
+    num_trials = 5 * (depth_draft + depth_target)
+    tail = sum(
+        math.comb(num_trials, i) for i in range(num_ones, num_trials + 1)
+    )
+    expected = float(fractions.Fraction(tail, 2**num_trials))
+    np.testing.assert_allclose(detector.p_value(tokens), [expected], rtol=1e-9)
+
+    generator = torch.Generator().manual_seed(1)
+    null_tokens = torch.randint(
+        low=2, high=1000, size=(2000, 60), generator=generator
+    ).to(device)
+    p = detector.p_value(null_tokens)
+    for alpha in (0.05, 0.2):
+      rate = float(np.mean(p <= alpha))
+      self.assertBetween(rate, alpha - 0.03, alpha + 0.03)
 
 
 if __name__ == '__main__':

@@ -117,6 +117,10 @@ class SpeculativeEngineTest(absltest.TestCase):
       speculative_engine.DualKeyWatermarkingConfig(key_draft=7, key_target=7)
     with self.assertRaisesRegex(ValueError, "num_leaves must be 2"):
       speculative_engine.DualKeyWatermarkingConfig(num_leaves=3)
+    with self.assertRaisesRegex(ValueError, "`depth` has to be >= 1"):
+      speculative_engine.DualKeyWatermarkingConfig(depth_draft=0)
+    with self.assertRaisesRegex(ValueError, "`depth` has to be >= 1"):
+      speculative_engine.DualKeyWatermarkingConfig(depth_target=0)
     other_model = transformers.GPT2LMHeadModel(
         transformers.GPT2Config(
             vocab_size=self.vocab_size + 1,
@@ -265,6 +269,36 @@ class SpeculativeEngineTest(absltest.TestCase):
     generated_ids = output.sequences[:, prompt_ids.shape[1] :]
     self.assertLess(detector.p_value(generated_ids)[0], 1e-6)
     self.assertGreater(wrong_key_detector.p_value(generated_ids)[0], 0.05)
+
+  def test_asymmetric_depths_generate_and_detect_watermark(self):
+    config = _make_config(
+        ngram_len=5,
+        key_draft=42,
+        key_target=84,
+        depth=15,
+        depth_draft=20,
+        depth_target=8,
+        top_k=30,
+        temperature=1.0,
+        draft_len=3,
+    )
+    self.assertEqual(config.make_draft_processor().depth, 20)
+    self.assertEqual(config.make_target_processor().depth, 8)
+    engine = speculative_engine.DualKeySpeculativeEngine(
+        self.target_model, self.draft_model, config
+    )
+    generator = torch.Generator(device=self.device).manual_seed(7)
+    prompt_ids = torch.randint(
+        2, self.vocab_size, (1, 8), generator=generator, device=self.device
+    )
+    output = engine.generate(
+        prompt_ids, max_new_tokens=150, eos_token_id=None, generator=generator
+    )
+    generated_ids = output.sequences[:, prompt_ids.shape[1] :]
+    detector = detector_frequentist.DualKeyFrequentistDetector.from_config(
+        config, eos_token_id=0
+    )
+    self.assertLess(float(detector.p_value(generated_ids)[0]), 1e-4)
 
   def _top_k_probs(
       self,

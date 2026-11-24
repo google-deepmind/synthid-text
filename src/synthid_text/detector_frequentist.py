@@ -116,39 +116,11 @@ class DualKeyFrequentistDetector:
 
     Raises:
       ValueError: If draft_processor and target_processor share the same key or
-        have different `depth`, `ngram_len`, `context_history_size` or
-        `device`.
+        have different `ngram_len`, `context_history_size`, or `device`.
     """
-    if draft_processor.key == target_processor.key:
-      raise ValueError(
-          "draft_processor and target_processor must have distinct keys, but"
-          f" both have key={draft_processor.key}."
-      )
-    if draft_processor.depth != target_processor.depth:
-      raise ValueError(
-          "draft_processor and target_processor must have the same depth, got"
-          f" {draft_processor.depth} and {target_processor.depth}."
-      )
-    if draft_processor.ngram_len != target_processor.ngram_len:
-      raise ValueError(
-          "draft_processor and target_processor must have the same ngram_len,"
-          f" got {draft_processor.ngram_len} and {target_processor.ngram_len}."
-      )
-    if (
-        draft_processor.context_history_size
-        != target_processor.context_history_size
-    ):
-      raise ValueError(
-          "draft_processor and target_processor must have the same"
-          " context_history_size, got"
-          f" {draft_processor.context_history_size} and"
-          f" {target_processor.context_history_size}."
-      )
-    if draft_processor.device != target_processor.device:
-      raise ValueError(
-          "draft_processor and target_processor must be on the same device,"
-          f" got {draft_processor.device} and {target_processor.device}."
-      )
+    logits_processing.validate_dual_key_processors(
+        draft_processor, target_processor
+    )
     self.draft_processor = draft_processor
     self.target_processor = target_processor
     self.eos_token_id = eos_token_id
@@ -185,11 +157,11 @@ class DualKeyFrequentistDetector:
     g_target, mask_target = self.target_processor.compute_g_values_and_mask(
         input_ids=outputs, eos_token_id=self.eos_token_id
     )
-    depth = g_draft.shape[-1]
     ones_draft = (g_draft * mask_draft.unsqueeze(-1)).sum(dim=(1, 2))
     ones_target = (g_target * mask_target.unsqueeze(-1)).sum(dim=(1, 2))
     num_ones = (ones_draft + ones_target).cpu().numpy()
     num_trials = (
-        ((mask_draft.sum(dim=1) + mask_target.sum(dim=1)) * depth).cpu().numpy()
-    )
+        mask_draft.sum(dim=1) * self.draft_processor.depth
+        + mask_target.sum(dim=1) * self.target_processor.depth
+    ).cpu().numpy()
     return stats.binom.sf(num_ones - 1, num_trials, 0.5)
