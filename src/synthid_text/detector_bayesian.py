@@ -16,7 +16,7 @@
 """Bayesian detector class."""
 
 import abc
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import enum
 import functools
 import gc
@@ -339,6 +339,17 @@ class LikelihoodModelUnwatermarked(nn.Module, LikelihoodModel):
     return 0.5 * jnp.ones_like(g_values)  # all g-values have prob 0.5.
 
 
+def _per_layer_log_odds(
+    likelihood_model_watermarked: LikelihoodModel,
+    likelihood_model_unwatermarked: LikelihoodModel,
+    g_values: jnp.ndarray,
+) -> jnp.ndarray:
+  """Returns per-layer log(P(g | wm) / P(g | uwm))."""
+  return jnp.log(likelihood_model_watermarked(g_values)) - jnp.log(
+      likelihood_model_unwatermarked(g_values)
+  )
+
+
 class BayesianDetectorModule(nn.Module):
   """Bayesian classifier for watermark detection Flax Module.
 
@@ -397,19 +408,103 @@ class BayesianDetectorModule(nn.Module):
       (batch_size,). The posterior P(watermarked | g-values) is the sigmoid of
       this value.
     """
-    likelihoods_watermarked = self.likelihood_model_watermarked(g_values)
-    likelihoods_unwatermarked = self.likelihood_model_unwatermarked(g_values)
-    mask = jnp.expand_dims(mask, -1)
-    log_likelihoods_watermarked = jnp.log(likelihoods_watermarked)
-    log_likelihoods_unwatermarked = jnp.log(likelihoods_unwatermarked)
-    log_odds = log_likelihoods_watermarked - log_likelihoods_unwatermarked
+    log_odds = _per_layer_log_odds(
+        self.likelihood_model_watermarked,
+        self.likelihood_model_unwatermarked,
+        g_values,
+    )
 
     # Sum relative surprisals (log odds) across all token positions and layers.
     relative_surprisal_likelihood = jnp.einsum(
-        "i...->i", log_odds * mask
+        "i...->i", log_odds * jnp.expand_dims(mask, -1)
     )  # (batch_size,).
 
     # Combine prior and likelihood log-odds.
+    return self.prior_log_odds + relative_surprisal_likelihood
+
+
+class DualKeyBayesianDetectorModule(nn.Module):
+  """Bayesian classifier Flax Module for dual-key speculative watermarking.
+
+  In dual-key speculative decoding, each unmasked token was sampled from either
+  `key_draft` or `key_target`, so its concatenated g-values follow a
+  two-component mixture model over the unknown token origin with learned mixing
+  weight `alpha = sigmoid(draft_mix_logit)`.
+  """
+
+  draft_depth: int
+  target_depth: int
+  params: Mapping[str, Mapping[str, Any]] | None = None
+  baserate: float = 0.5
+
+  def l2_loss(self) -> jnp.ndarray:
+    """Returns the sum of L2 penalties across both likelihood models."""
+    return (
+        self.draft_likelihood_model.l2_loss()
+        + self.target_likelihood_model.l2_loss()
+    )
+
+  def setup(self):
+    """Initializes parameters for both keys, the mixture weight and prior."""
+    self.draft_likelihood_model = LikelihoodModelWatermarked(
+        watermarking_depth=self.draft_depth,
+    )
+    self.target_likelihood_model = LikelihoodModelWatermarked(
+        watermarking_depth=self.target_depth,
+    )
+    self.likelihood_model_unwatermarked = LikelihoodModelUnwatermarked()
+    self.prior_log_odds = self.param(
+        "prior_log_odds",
+        lambda *x: jax.scipy.special.logit(self.baserate),
+        (1,),
+    )
+    self.draft_mix_logit = self.param(
+        "draft_mix_logit",
+        lambda *x: jnp.zeros(()),
+        (),
+    )
+
+  def __call__(
+      self,
+      g_values: jnp.ndarray,
+      mask: jnp.ndarray,
+  ) -> jnp.ndarray:
+    """Computes posterior log-odds from concatenated (draft, target) g-values.
+
+    Args:
+      g_values: Binary g-values of shape (batch_size, seq_len, draft_depth +
+        target_depth), with draft g-values first and target g-values second.
+      mask: Boolean or 0/1 array of shape (batch_size, seq_len).
+
+    Returns:
+      Posterior log-odds of shape (batch_size,).
+    """
+    draft_g = g_values[..., : self.draft_depth]
+    target_g = g_values[..., self.draft_depth :]
+    draft_log_lr = jnp.sum(
+        _per_layer_log_odds(
+            self.draft_likelihood_model,
+            self.likelihood_model_unwatermarked,
+            draft_g,
+        ),
+        axis=-1,
+    )
+    target_log_lr = jnp.sum(
+        _per_layer_log_odds(
+            self.target_likelihood_model,
+            self.likelihood_model_unwatermarked,
+            target_g,
+        ),
+        axis=-1,
+    )
+    log_alpha = jax.nn.log_sigmoid(self.draft_mix_logit)
+    log_one_minus_alpha = jax.nn.log_sigmoid(-self.draft_mix_logit)
+    # Marginalize over unknown token origin (draft vs target residual/bonus).
+    pos_log_lr = jnp.logaddexp(
+        log_alpha + draft_log_lr,
+        log_one_minus_alpha + target_log_lr,
+    )
+    relative_surprisal_likelihood = jnp.sum(pos_log_lr * mask, axis=-1)
     return self.prior_log_odds + relative_surprisal_likelihood
 
 
@@ -780,6 +875,235 @@ def _check_num_leaves_is_two(
     )
 
 
+def _resolve_max_padded_length(
+    pos_truncation_length: int | None,
+    neg_truncation_length: int | None,
+    max_padded_length: int | None,
+) -> int:
+  """Validates truncation settings and resolves `max_padded_length`."""
+  if max_padded_length is None:
+    if pos_truncation_length is None or neg_truncation_length is None:
+      raise ValueError(
+          "max_padded_length must be set if pos_truncation_length or"
+          " neg_truncation_length is None."
+      )
+    max_padded_length = max(pos_truncation_length, neg_truncation_length)
+  for name, truncation_length in (
+      ("pos_truncation_length", pos_truncation_length),
+      ("neg_truncation_length", neg_truncation_length),
+  ):
+    if truncation_length is not None and max_padded_length < truncation_length:
+      raise ValueError(
+          f"max_padded_length ({max_padded_length}) must be at least"
+          f" {name} ({truncation_length})."
+      )
+  return max_padded_length
+
+
+def _process_split_outputs(
+    outputs: Sequence[np.ndarray] | np.ndarray,
+    *,
+    logits_processors: Sequence[logits_processing.SynthIDLogitsProcessor],
+    eos_token_id: int | Sequence[int],
+    truncation_length: int | None,
+    max_padded_length: int,
+    torch_device: torch.device,
+    is_pos: bool,
+    is_cv: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+  """Computes padded g-values and masks for one train/CV split."""
+  batches = [
+      torch.as_tensor(batch, device=torch_device, dtype=torch.long)
+      for batch in outputs
+  ]
+  per_processor_masks: list[list[torch.Tensor]] = []
+  per_processor_g: list[list[torch.Tensor]] = []
+  for processor in logits_processors:
+    masks, g_values = process_outputs_for_training(
+        batches,
+        logits_processor=processor,
+        eos_token_id=eos_token_id,
+        truncation_length=truncation_length,
+        max_length=max_padded_length,
+        torch_device=torch_device,
+    )
+    per_processor_masks.append(masks)
+    per_processor_g.append(g_values)
+
+  if not per_processor_masks[0]:
+    split_name = (
+        f"{'watermarked' if is_pos else 'unwatermarked'} "
+        f"{'cross-validation' if is_cv else 'training'}"
+    )
+    raise ValueError(
+        f"No {split_name} rows left after filtering with truncation"
+        f" length {truncation_length}: rows need at least that many"
+        " tokens before the first EOS token."
+    )
+
+  if len(logits_processors) == 1:
+    combined_masks = per_processor_masks[0]
+    combined_g = per_processor_g[0]
+  else:
+    combined_masks = [
+        m_d * m_t
+        for m_d, m_t in zip(per_processor_masks[0], per_processor_masks[1])
+    ]
+    combined_g = [
+        torch.cat((g_d, g_t), dim=-1)
+        for g_d, g_t in zip(per_processor_g[0], per_processor_g[1])
+    ]
+  return (
+      torch.cat(combined_g, dim=0).cpu().numpy(),
+      torch.cat(combined_masks, dim=0).cpu().numpy(),
+  )
+
+
+def _prepare_train_cv_datasets(
+    *,
+    tokenized_wm_outputs: Sequence[np.ndarray] | np.ndarray,
+    tokenized_uwm_outputs: Sequence[np.ndarray] | np.ndarray,
+    logits_processors: Sequence[logits_processing.SynthIDLogitsProcessor],
+    eos_token_id: int | Sequence[int],
+    torch_device: torch.device,
+    test_size: float,
+    pos_truncation_length: int | None,
+    neg_truncation_length: int | None,
+    max_padded_length: int | None,
+    seed: int,
+) -> tuple[
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+]:
+  """Splits raw outputs and builds shuffled train/CV JAX arrays."""
+  resolved_max_len = _resolve_max_padded_length(
+      pos_truncation_length, neg_truncation_length, max_padded_length
+  )
+  wm_split_seq, uwm_split_seq, train_perm_seq, cv_perm_seq = (
+      np.random.SeedSequence(seed).spawn(4)
+  )
+  train_wm_outputs, cv_wm_outputs = model_selection.train_test_split(
+      tokenized_wm_outputs,
+      test_size=test_size,
+      random_state=int(wm_split_seq.generate_state(1)[0]),
+  )
+  train_uwm_outputs, cv_uwm_outputs = model_selection.train_test_split(
+      tokenized_uwm_outputs,
+      test_size=test_size,
+      random_state=int(uwm_split_seq.generate_state(1)[0]),
+  )
+
+  def build_dataset(
+      wm_outputs: Sequence[np.ndarray] | np.ndarray,
+      uwm_outputs: Sequence[np.ndarray] | np.ndarray,
+      *,
+      is_cv: bool,
+      perm_seq: np.random.SeedSequence,
+  ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    wm_g, wm_m = _process_split_outputs(
+        wm_outputs,
+        logits_processors=logits_processors,
+        eos_token_id=eos_token_id,
+        truncation_length=pos_truncation_length,
+        max_padded_length=resolved_max_len,
+        torch_device=torch_device,
+        is_pos=True,
+        is_cv=is_cv,
+    )
+    uwm_g, uwm_m = _process_split_outputs(
+        uwm_outputs,
+        logits_processors=logits_processors,
+        eos_token_id=eos_token_id,
+        truncation_length=(
+            pos_truncation_length if is_cv else neg_truncation_length
+        ),
+        max_padded_length=resolved_max_len,
+        torch_device=torch_device,
+        is_pos=False,
+        is_cv=is_cv,
+    )
+    g_values = np.concatenate((wm_g, uwm_g), axis=0)
+    masks = np.concatenate((wm_m, uwm_m), axis=0)
+    labels = np.concatenate((
+        np.ones(len(wm_m), dtype=bool),
+        np.zeros(len(uwm_m), dtype=bool),
+    ))
+    perm = np.random.default_rng(perm_seq).permutation(len(g_values))
+    return (
+        jnp.asarray(g_values[perm]),
+        jnp.asarray(masks[perm]),
+        jnp.asarray(labels[perm]),
+    )
+
+  train_g_values, train_masks, train_labels = build_dataset(
+      train_wm_outputs,
+      train_uwm_outputs,
+      is_cv=False,
+      perm_seq=train_perm_seq,
+  )
+  cv_g_values, cv_masks, cv_labels = build_dataset(
+      cv_wm_outputs,
+      cv_uwm_outputs,
+      is_cv=True,
+      perm_seq=cv_perm_seq,
+  )
+  gc.collect()
+  torch.cuda.empty_cache()
+
+  return (
+      train_g_values,
+      train_masks,
+      train_labels,
+      cv_g_values,
+      cv_masks,
+      cv_labels,
+  )
+
+
+def _train_best_detector_module(
+    *,
+    module_factory: Callable[[], Any],
+    train_g_values: jnp.ndarray,
+    train_masks: jnp.ndarray,
+    train_labels: jnp.ndarray,
+    cv_g_values: jnp.ndarray,
+    cv_masks: jnp.ndarray,
+    cv_labels: jnp.ndarray,
+    n_epochs: int,
+    learning_rate: float,
+    l2_weights: np.ndarray,
+    verbose: bool,
+    seed: int,
+) -> tuple[Mapping[str, Mapping[str, Any]], float]:
+  """Trains detector modules across `l2_weights` and returns best params."""
+  if np.size(l2_weights) == 0:
+    raise ValueError("l2_weights must not be empty.")
+  results = []
+  for l2_weight in l2_weights:
+    detector_module = module_factory()
+    _, min_val_loss = train(
+        detector_module=detector_module,
+        g_values=train_g_values,
+        mask=train_masks,
+        watermarked=train_labels,
+        g_values_val=cv_g_values,
+        mask_val=cv_masks,
+        watermarked_val=cv_labels,
+        learning_rate=learning_rate,
+        l2_weight=l2_weight,
+        epochs=n_epochs,
+        seed=seed,
+        verbose=verbose,
+    )
+    results.append((min_val_loss, detector_module.params))
+  lowest_loss, best_params = min(results, key=lambda result: result[0])
+  return best_params, lowest_loss
+
+
 class BayesianDetector:
   """Bayesian detector class used for watermark detection."""
 
@@ -913,122 +1237,17 @@ class BayesianDetector:
         any of the four splits (watermarked/unwatermarked x train/CV) has no
         rows left after filtering.
     """
-    if max_padded_length is None:
-      if pos_truncation_length is None or neg_truncation_length is None:
-        raise ValueError(
-            "max_padded_length must be set if pos_truncation_length or"
-            " neg_truncation_length is None."
-        )
-      max_padded_length = max(pos_truncation_length, neg_truncation_length)
-    for name, truncation_length in (
-        ("pos_truncation_length", pos_truncation_length),
-        ("neg_truncation_length", neg_truncation_length),
-    ):
-      if truncation_length is None:
-        continue
-      if max_padded_length < truncation_length:
-        raise ValueError(
-            f"max_padded_length ({max_padded_length}) must be at least"
-            f" {name} ({truncation_length})."
-        )
-
-    # Independent streams for the two splits and the two shuffles.
-    wm_split_seq, uwm_split_seq, train_perm_seq, cv_perm_seq = (
-        np.random.SeedSequence(seed).spawn(4)
-    )
-
-    # Split data into train and CV
-    train_wm_outputs, cv_wm_outputs = model_selection.train_test_split(
-        tokenized_wm_outputs,
+    return _prepare_train_cv_datasets(
+        tokenized_wm_outputs=tokenized_wm_outputs,
+        tokenized_uwm_outputs=tokenized_uwm_outputs,
+        logits_processors=(logits_processor,),
+        eos_token_id=eos_token_id,
+        torch_device=torch_device,
         test_size=test_size,
-        random_state=int(wm_split_seq.generate_state(1)[0]),
-    )
-
-    train_uwm_outputs, cv_uwm_outputs = model_selection.train_test_split(
-        tokenized_uwm_outputs,
-        test_size=test_size,
-        random_state=int(uwm_split_seq.generate_state(1)[0]),
-    )
-
-    def process_split(
-        outputs: Sequence[np.ndarray] | np.ndarray,
-        *,
-        is_pos: bool,
-        is_cv: bool,
-    ) -> tuple[np.ndarray, np.ndarray]:
-      truncation_length = (
-          pos_truncation_length if (is_pos or is_cv) else neg_truncation_length
-      )
-      masks, g_values = process_outputs_for_training(
-          [
-              torch.as_tensor(batch, device=torch_device, dtype=torch.long)
-              for batch in outputs
-          ],
-          logits_processor=logits_processor,
-          eos_token_id=eos_token_id,
-          truncation_length=truncation_length,
-          max_length=max_padded_length,
-          torch_device=torch_device,
-      )
-      if not masks:
-        split_name = (
-            f"{'watermarked' if is_pos else 'unwatermarked'} "
-            f"{'cross-validation' if is_cv else 'training'}"
-        )
-        raise ValueError(
-            f"No {split_name} rows left after filtering with truncation"
-            f" length {truncation_length}: rows need at least that many"
-            " tokens before the first EOS token."
-        )
-      return (
-          torch.cat(g_values, dim=0).cpu().numpy(),
-          torch.cat(masks, dim=0).cpu().numpy(),
-      )
-
-    def build_dataset(
-        wm_outputs: Sequence[np.ndarray] | np.ndarray,
-        uwm_outputs: Sequence[np.ndarray] | np.ndarray,
-        *,
-        is_cv: bool,
-        perm_seq: np.random.SeedSequence,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-      wm_g, wm_m = process_split(wm_outputs, is_pos=True, is_cv=is_cv)
-      uwm_g, uwm_m = process_split(uwm_outputs, is_pos=False, is_cv=is_cv)
-      g_values = np.concatenate((wm_g, uwm_g), axis=0)
-      masks = np.concatenate((wm_m, uwm_m), axis=0)
-      labels = np.concatenate((
-          np.ones(len(wm_m), dtype=bool),
-          np.zeros(len(uwm_m), dtype=bool),
-      ))
-      perm = np.random.default_rng(perm_seq).permutation(len(g_values))
-      return (
-          jnp.asarray(g_values[perm]),
-          jnp.asarray(masks[perm]),
-          jnp.asarray(labels[perm]),
-      )
-
-    train_g_values, train_masks, train_labels = build_dataset(
-        train_wm_outputs,
-        train_uwm_outputs,
-        is_cv=False,
-        perm_seq=train_perm_seq,
-    )
-    cv_g_values, cv_masks, cv_labels = build_dataset(
-        cv_wm_outputs,
-        cv_uwm_outputs,
-        is_cv=True,
-        perm_seq=cv_perm_seq,
-    )
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    return (
-        train_g_values,
-        train_masks,
-        train_labels,
-        cv_g_values,
-        cv_masks,
-        cv_labels,
+        pos_truncation_length=pos_truncation_length,
+        neg_truncation_length=neg_truncation_length,
+        max_padded_length=max_padded_length,
+        seed=seed,
     )
 
   @classmethod
@@ -1086,31 +1305,22 @@ class BayesianDetector:
         is not 2, or if `train` raises (e.g. on a non-finite loss).
     """
     _check_num_leaves_is_two(logits_processor)
-    if np.size(l2_weights) == 0:
-      raise ValueError("l2_weights must not be empty.")
-    # train() raises on non-finite losses, so every min_val_loss is finite.
-    results = []
-    for l2_weight in l2_weights:
-      detector_module = BayesianDetectorModule(
-          watermarking_depth=logits_processor.depth,
-      )
-      _, min_val_loss = train(
-          detector_module=detector_module,
-          g_values=train_g_values,
-          mask=train_masks,
-          watermarked=train_labels,
-          g_values_val=cv_g_values,
-          mask_val=cv_masks,
-          watermarked_val=cv_labels,
-          learning_rate=learning_rate,
-          l2_weight=l2_weight,
-          epochs=n_epochs,
-          seed=seed,
-          verbose=verbose,
-      )
-      results.append((min_val_loss, detector_module.params))
-    # min() returns the first minimum, i.e. the smallest index on ties.
-    lowest_loss, best_params = min(results, key=lambda result: result[0])
+    best_params, lowest_loss = _train_best_detector_module(
+        module_factory=lambda: BayesianDetectorModule(
+            watermarking_depth=logits_processor.depth,
+        ),
+        train_g_values=train_g_values,
+        train_masks=train_masks,
+        train_labels=train_labels,
+        cv_g_values=cv_g_values,
+        cv_masks=cv_masks,
+        cv_labels=cv_labels,
+        n_epochs=n_epochs,
+        learning_rate=learning_rate,
+        l2_weights=l2_weights,
+        verbose=verbose,
+        seed=seed,
+    )
     return cls(logits_processor, eos_token_id, best_params), lowest_loss
 
   @classmethod
@@ -1219,5 +1429,259 @@ class BayesianDetector:
         n_epochs=n_epochs,
         learning_rate=learning_rate,
         l2_weights=l2_weights,
+        seed=seed,
+    )
+
+
+class DualKeyBayesianDetector:
+  """Bayesian detector for dual-key speculative decoding outputs.
+
+  Models each unmasked token position as a mixture over the two watermarking
+  keys (`key_draft` for accepted draft tokens and `key_target` for target
+  residual/bonus tokens) with a learned mixing probability.
+  """
+
+  detector_module: DualKeyBayesianDetectorModule
+  draft_processor: logits_processing.SynthIDLogitsProcessor
+  target_processor: logits_processing.SynthIDLogitsProcessor
+  eos_token_id: int | Sequence[int]
+
+  def __init__(
+      self,
+      draft_processor: logits_processing.SynthIDLogitsProcessor,
+      target_processor: logits_processing.SynthIDLogitsProcessor,
+      eos_token_id: int | Sequence[int],
+      params: Mapping[str, Mapping[str, Any]],
+  ):
+    """Initializes the dual-key Bayesian detector.
+
+    Args:
+      draft_processor: SynthIDLogitsProcessor configured with `key_draft`.
+      target_processor: SynthIDLogitsProcessor configured with `key_target`.
+      eos_token_id: EOS token ID or sequence of EOS token IDs.
+      params: Trained parameters of the DualKeyBayesianDetectorModule.
+
+    Raises:
+      ValueError: If either processor has `num_leaves != 2`, or if the
+        processors do not form a valid dual-key pair.
+    """
+    logits_processing.validate_dual_key_processors(
+        draft_processor, target_processor
+    )
+    _check_num_leaves_is_two(draft_processor)
+    _check_num_leaves_is_two(target_processor)
+    self.detector_module = DualKeyBayesianDetectorModule(
+        draft_depth=draft_processor.depth,
+        target_depth=target_processor.depth,
+        params=params,
+    )
+    self.draft_processor = draft_processor
+    self.target_processor = target_processor
+    self.eos_token_id = eos_token_id
+
+  @classmethod
+  def from_config(
+      cls,
+      config: Any,
+      eos_token_id: int | Sequence[int],
+      params: Mapping[str, Mapping[str, Any]],
+  ) -> "DualKeyBayesianDetector":
+    """Constructs a detector from a DualKeyWatermarkingConfig."""
+    return cls(
+        draft_processor=config.make_draft_processor(),
+        target_processor=config.make_target_processor(),
+        eos_token_id=eos_token_id,
+        params=params,
+    )
+
+  def score(self, outputs: torch.LongTensor) -> jnp.ndarray:
+    """Scores generated sequences for dual-key watermark presence.
+
+    Args:
+      outputs: Generated token IDs of shape (batch_size, output_len), with the
+        prompt removed.
+
+    Returns:
+      Posterior P(watermarked | g-values) of shape (batch_size,).
+
+    Raises:
+      ValueError: If detector_module.params is None.
+    """
+    if self.detector_module.params is None:
+      raise ValueError("params must be set before calling score")
+    g_draft, mask_draft = self.draft_processor.compute_g_values_and_mask(
+        input_ids=outputs,
+        eos_token_id=self.eos_token_id,
+    )
+    g_target, mask_target = self.target_processor.compute_g_values_and_mask(
+        input_ids=outputs,
+        eos_token_id=self.eos_token_id,
+    )
+    g_values = torch.cat((g_draft, g_target), dim=-1)
+    mask = mask_draft * mask_target
+    log_odds: Any = self.detector_module.apply(
+        self.detector_module.params,
+        g_values.cpu().numpy(),
+        mask.cpu().numpy(),
+    )
+    return jax.nn.sigmoid(log_odds)
+
+  @classmethod
+  def process_raw_model_outputs(
+      cls,
+      *,
+      tokenized_wm_outputs: Sequence[np.ndarray] | np.ndarray,
+      tokenized_uwm_outputs: Sequence[np.ndarray] | np.ndarray,
+      draft_processor: logits_processing.SynthIDLogitsProcessor,
+      target_processor: logits_processing.SynthIDLogitsProcessor,
+      eos_token_id: int | Sequence[int],
+      torch_device: torch.device,
+      test_size: float = 0.3,
+      pos_truncation_length: int | None = 200,
+      neg_truncation_length: int | None = 100,
+      max_padded_length: int | None = None,
+      seed: int = 0,
+  ) -> tuple[
+      jnp.ndarray,
+      jnp.ndarray,
+      jnp.ndarray,
+      jnp.ndarray,
+      jnp.ndarray,
+      jnp.ndarray,
+  ]:
+    """Processes raw outputs into concatenated dual-key g-values and masks."""
+    logits_processing.validate_dual_key_processors(
+        draft_processor, target_processor
+    )
+    return _prepare_train_cv_datasets(
+        tokenized_wm_outputs=tokenized_wm_outputs,
+        tokenized_uwm_outputs=tokenized_uwm_outputs,
+        logits_processors=(draft_processor, target_processor),
+        eos_token_id=eos_token_id,
+        torch_device=torch_device,
+        test_size=test_size,
+        pos_truncation_length=pos_truncation_length,
+        neg_truncation_length=neg_truncation_length,
+        max_padded_length=max_padded_length,
+        seed=seed,
+    )
+
+  @classmethod
+  def train_best_detector_given_g_values(
+      cls,
+      *,
+      train_g_values: jnp.ndarray,
+      train_masks: jnp.ndarray,
+      train_labels: jnp.ndarray,
+      cv_g_values: jnp.ndarray,
+      cv_masks: jnp.ndarray,
+      cv_labels: jnp.ndarray,
+      draft_processor: logits_processing.SynthIDLogitsProcessor,
+      target_processor: logits_processing.SynthIDLogitsProcessor,
+      eos_token_id: int | Sequence[int],
+      n_epochs: int = 50,
+      learning_rate: float = 2.1e-2,
+      l2_weights: np.ndarray = np.logspace(-3, -2, num=4),
+      verbose: bool = False,
+      seed: int = 0,
+  ) -> tuple["DualKeyBayesianDetector", float]:
+    """Trains dual-key detectors on concatenated g-values; returns the best."""
+    logits_processing.validate_dual_key_processors(
+        draft_processor, target_processor
+    )
+    _check_num_leaves_is_two(draft_processor)
+    _check_num_leaves_is_two(target_processor)
+    expected_depth = draft_processor.depth + target_processor.depth
+    if (
+        train_g_values.shape[-1] != expected_depth
+        or cv_g_values.shape[-1] != expected_depth
+    ):
+      raise ValueError(
+          "Expected g-values with depth draft_depth + target_depth ="
+          f" {expected_depth}, got {train_g_values.shape[-1]} and"
+          f" {cv_g_values.shape[-1]}."
+      )
+    best_params, lowest_loss = _train_best_detector_module(
+        module_factory=lambda: DualKeyBayesianDetectorModule(
+            draft_depth=draft_processor.depth,
+            target_depth=target_processor.depth,
+        ),
+        train_g_values=train_g_values,
+        train_masks=train_masks,
+        train_labels=train_labels,
+        cv_g_values=cv_g_values,
+        cv_masks=cv_masks,
+        cv_labels=cv_labels,
+        n_epochs=n_epochs,
+        learning_rate=learning_rate,
+        l2_weights=l2_weights,
+        verbose=verbose,
+        seed=seed,
+    )
+    return (
+        cls(draft_processor, target_processor, eos_token_id, best_params),
+        lowest_loss,
+    )
+
+  @classmethod
+  def train_best_detector(
+      cls,
+      *,
+      tokenized_wm_outputs: Sequence[np.ndarray] | np.ndarray,
+      tokenized_uwm_outputs: Sequence[np.ndarray] | np.ndarray,
+      draft_processor: logits_processing.SynthIDLogitsProcessor,
+      target_processor: logits_processing.SynthIDLogitsProcessor,
+      eos_token_id: int | Sequence[int],
+      torch_device: torch.device,
+      test_size: float = 0.3,
+      pos_truncation_length: int | None = 200,
+      neg_truncation_length: int | None = 100,
+      max_padded_length: int | None = None,
+      n_epochs: int = 50,
+      learning_rate: float = 2.1e-2,
+      l2_weights: np.ndarray = np.logspace(-3, -2, num=4),
+      verbose: bool = False,
+      seed: int = 0,
+  ) -> tuple["DualKeyBayesianDetector", float]:
+    """Constructs, trains and returns the best dual-key Bayesian detector."""
+    logits_processing.validate_dual_key_processors(
+        draft_processor, target_processor
+    )
+    _check_num_leaves_is_two(draft_processor)
+    _check_num_leaves_is_two(target_processor)
+    (
+        train_g_values,
+        train_masks,
+        train_labels,
+        cv_g_values,
+        cv_masks,
+        cv_labels,
+    ) = cls.process_raw_model_outputs(
+        tokenized_wm_outputs=tokenized_wm_outputs,
+        tokenized_uwm_outputs=tokenized_uwm_outputs,
+        draft_processor=draft_processor,
+        target_processor=target_processor,
+        eos_token_id=eos_token_id,
+        torch_device=torch_device,
+        test_size=test_size,
+        pos_truncation_length=pos_truncation_length,
+        neg_truncation_length=neg_truncation_length,
+        max_padded_length=max_padded_length,
+        seed=seed,
+    )
+    return cls.train_best_detector_given_g_values(
+        train_g_values=train_g_values,
+        train_masks=train_masks,
+        train_labels=train_labels,
+        cv_g_values=cv_g_values,
+        cv_masks=cv_masks,
+        cv_labels=cv_labels,
+        draft_processor=draft_processor,
+        target_processor=target_processor,
+        eos_token_id=eos_token_id,
+        n_epochs=n_epochs,
+        learning_rate=learning_rate,
+        l2_weights=l2_weights,
+        verbose=verbose,
         seed=seed,
     )

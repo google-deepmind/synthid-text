@@ -134,7 +134,12 @@ class DualKeyWatermarkingConfig:
     key_target: Secret watermarking key for residual replacement and bonus
       tokens from the target model, an int in [0, 2**63) distinct from
       key_draft.
-    depth: Number of tournament layers (D), >= 1.
+    depth: Default number of tournament layers (D), >= 1, used when
+      `depth_draft` or `depth_target` is None.
+    depth_draft: Optional tournament depth for `key_draft`, >= 1. Defaults to
+      `depth`.
+    depth_target: Optional tournament depth for `key_target`, >= 1. Defaults to
+      `depth`.
     context_history_size: Number of recently seen contexts to remember.
     temperature: Positive temperature for scaling model logits.
     top_k: Number of highest-probability candidate tokens kept when sampling, >=
@@ -161,6 +166,8 @@ class DualKeyWatermarkingConfig:
   key_draft: int = 42
   key_target: int = 84
   depth: int = 15
+  depth_draft: int | None = None
+  depth_target: int | None = None
   context_history_size: int = 1024
   temperature: float = 1.0
   top_k: int = 40
@@ -213,19 +220,21 @@ class DualKeyWatermarkingConfig:
 
   def make_draft_processor(self) -> logits_processing.SynthIDLogitsProcessor:
     """Returns a fresh SynthIDLogitsProcessor configured with key_draft."""
-    return self._make_processor(self.key_draft)
+    depth = self.depth if self.depth_draft is None else self.depth_draft
+    return self._make_processor(self.key_draft, depth)
 
   def make_target_processor(self) -> logits_processing.SynthIDLogitsProcessor:
     """Returns a fresh SynthIDLogitsProcessor configured with key_target."""
-    return self._make_processor(self.key_target)
+    depth = self.depth if self.depth_target is None else self.depth_target
+    return self._make_processor(self.key_target, depth)
 
   def _make_processor(
-      self, key: int
+      self, key: int, depth: int
   ) -> logits_processing.SynthIDLogitsProcessor:
     return logits_processing.SynthIDLogitsProcessor(
         ngram_len=self.ngram_len,
         key=key,
-        depth=self.depth,
+        depth=depth,
         context_history_size=self.context_history_size,
         device=self.watermark_device,
         skip_first_ngram_calls=self.skip_first_ngram_calls,
